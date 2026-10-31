@@ -47,6 +47,10 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
         std::exit(1);
       }
     }
+    // Only the exact executable this build was recompiled from can run.
+    if (!xex_version_check(paths.game_data_root, "6f8ba4d7f8f7e7fa73fa90addc57b219691f4e92", 2297856u, "After Burner Climax")) {
+      std::exit(1);
+    }
     config_path_ = paths.config_path;
   }
 
