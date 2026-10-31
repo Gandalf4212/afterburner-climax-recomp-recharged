@@ -48,9 +48,23 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       }
     }
     // Only the exact executable this build was recompiled from can run.
-    if (!xex_version_check(paths.game_data_root, "6f8ba4d7f8f7e7fa73fa90addc57b219691f4e92", 2297856u, "After Burner Climax")) {
-      std::exit(1);
-    }
+    // Two releases of the game are supported, each by its own exe (their code
+    // is at different addresses); this one hands off to the other if needed.
+    static const XexVariant kVariants[] = {
+        {"original release (1.0.0.0)", "6f8ba4d7f8f7e7fa73fa90addc57b219691f4e92", 2297856u,
+         "after_burner_climax.exe"},
+        {"World release (0.0.1.2)", "a066b2d60eefb2d5982c07e862d5a9ea8b626eca", 2293760u,
+         "after_burner_climax_world.exe"},
+    };
+#ifdef ABC_WORLD
+    constexpr int kSelf = 1;
+#else
+    constexpr int kSelf = 0;
+#endif
+    const int vc = xex_variant_check(paths.game_data_root, rex::filesystem::GetExecutableFolder(),
+                                     kVariants, 2, kSelf, "After Burner Climax");
+    if (vc == 2) std::exit(0);
+    if (vc == 0) std::exit(1);
     config_path_ = paths.config_path;
   }
 

@@ -316,3 +316,81 @@ bool xex_version_check(const fs::path& assets, const char* expected_sha1_hex, ui
                true);
   return false;
 }
+
+static bool xex_fingerprint(const fs::path& xex, uint64_t& size, std::string& sha1_hex) {
+  std::error_code ec;
+  size = fs::file_size(xex, ec);
+  if (ec) return false;
+  std::vector<uint8_t> data(static_cast<size_t>(size));
+  FILE* f = fopen(xex.string().c_str(), "rb");
+  if (!f) return false;
+  const size_t n = fread(data.data(), 1, data.size(), f);
+  fclose(f);
+  if (n != data.size()) return false;
+  uint8_t h[20];
+  sha1(data.data(), data.size(), h);
+  char hex[41];
+  for (int i = 0; i < 20; i++) snprintf(hex + i * 2, 3, "%02x", h[i]);
+  sha1_hex = hex;
+  return true;
+}
+
+#ifdef _WIN32
+// Starts exe with this process's arguments (everything after argv[0]).
+static bool relaunch_as(const fs::path& exe) {
+  std::wstring cmd = GetCommandLineW();
+  size_t i = 0;
+  if (!cmd.empty() && cmd[0] == L'"') {
+    i = cmd.find(L'"', 1);
+    i = (i == std::wstring::npos) ? cmd.size() : i + 1;
+  } else {
+    while (i < cmd.size() && cmd[i] != L' ' && cmd[i] != L'\t') i++;
+  }
+  std::wstring line = L"\"" + exe.wstring() + L"\"" + cmd.substr(i);
+  STARTUPINFOW si{};
+  si.cb = sizeof(si);
+  PROCESS_INFORMATION pi{};
+  if (!CreateProcessW(exe.wstring().c_str(), line.data(), nullptr, nullptr, FALSE, 0, nullptr,
+                      exe.parent_path().wstring().c_str(), &si, &pi)) {
+    return false;
+  }
+  CloseHandle(pi.hThread);
+  CloseHandle(pi.hProcess);
+  return true;
+}
+#endif
+
+int xex_variant_check(const fs::path& assets, const fs::path& exe_dir, const XexVariant* variants,
+                      int count, int self, const std::string& game) {
+  const fs::path xex = assets / "default.xex";
+  std::error_code ec;
+  if (!fs::exists(xex, ec)) return 1;  // the normal "game files not found" path handles this
+  uint64_t size = 0;
+  std::string got = "(unreadable)";
+  xex_fingerprint(xex, size, got);
+  for (int v = 0; v < count; v++) {
+    if (size != variants[v].size || got != variants[v].sha1_hex) continue;
+    if (v == self) return 1;
+#ifdef _WIN32
+    const fs::path other = exe_dir / variants[v].exe;
+    if (fs::exists(other, ec) && relaunch_as(other)) return 2;
+    show_message(game, std::string("Your game files are the ") + variants[v].name + ", which needs " +
+                           variants[v].exe + ".\n\nIt should be in the same folder as this exe; "
+                           "please re-extract the download.",
+                 true);
+    return 0;
+#endif
+  }
+  std::string list;
+  for (int v = 0; v < count; v++) {
+    list += std::string("  - ") + variants[v].name + ": " + std::to_string(variants[v].size) +
+            " bytes, SHA-1 " + variants[v].sha1_hex + "\n";
+  }
+  show_message(game,
+               "Your game files are a version this build doesn't support.\n\n"
+               "Supported default.xex versions:\n" + list +
+               "\nYours: " + std::to_string(size) + " bytes, SHA-1 " + got + "\n\n"
+               "Use one of the supported releases, without title updates applied.",
+               true);
+  return 0;
+}

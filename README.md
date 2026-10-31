@@ -2,6 +2,16 @@
 
 Static recompilation of **After Burner Climax** (Xbox 360 XBLA, SEGA AM2, 2010; Title ID 58410A06, default.xex 1.0.0.0 built 2009-12-21) to native Windows, using the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) v0.9.0.
 
+Two releases are supported, each recompiled separately (their code sits at different addresses):
+
+| Release | default.xex | Exe |
+|---|---|---|
+| World (retail XBLA package) | 0.0.1.2, 2,293,760 bytes, SHA-1 `a066b2d6…` | `after_burner_climax_world.exe` (code in `world/generated`) |
+| Original | 1.0.0.0, 2,297,856 bytes, SHA-1 `6f8ba4d7…` | `after_burner_climax.exe` (code in `generated`) |
+
+Run `after_burner_climax.exe` either way: it checks your `default.xex` and starts the World exe if that's what you have.
+Any other version gets a message naming the supported ones.
+
 **No game data is included.** You need your own After Burner Climax XBLA package (the Xbox 360 LIVE file from
 your console's storage).
 
