@@ -574,7 +574,8 @@ void GameMenu::DrawMain(float scale) {
   Painter p{ImGui::GetWindowDrawList(), ImGui::GetFont(), 24.0f * scale};
   const float em = p.TextWidth("M");
   const float lh = p.size * 1.7f;
-  const float pw = std::min(io.DisplaySize.x - 40 * scale, em * 46.0f);
+  // Wide enough for the longest label and value ("Performance overlay", "Immediate (G-Sync/FreeSync)").
+  const float pw = std::min(io.DisplaySize.x - 40 * scale, em * 64.0f);
   const float tab_h = p.size * 1.6f;
   const float ph = 20 * scale + p.size * 1.25f + 24 * scale + tab_h + 18 * scale + kMaxTabRows * lh +
                    p.size * 2.6f + p.size * 1.6f + 16 * scale;
@@ -608,7 +609,7 @@ void GameMenu::DrawMain(float scale) {
 
   // ---- rows
   const std::vector<int>& cur = tabs[tab_].rows;
-  const float value_w = inner_w * 0.5f, value_x = inner_x + inner_w - value_w - 8 * scale;
+  const float value_w = inner_w * 0.56f, value_x = inner_x + inner_w - value_w - 8 * scale;
   for (int i = 0; i < int(cur.size()); i++) {
     const int row = cur[i];
     const float ry = y + i * lh;

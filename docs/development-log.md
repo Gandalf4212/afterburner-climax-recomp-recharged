@@ -157,6 +157,8 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       frame start in the Swap hook (`game_pause.h`); suspending guest threads from outside was rejected (a thread
       stopped in a host lock such as the heap's would hang the menu). NativeX D132 (patch 0008): `SetPaused`, the
       queue's poller re-presents the last frame with the dialogs at up to 60 FPS.
+- [ ] Jets invisible under NativeX (found when NativeX became the only renderer; earlier "working" builds ran Xenia
+      by default). Menu widened (em*64, value column 56 %): long values overran it. See HANDOFF for the plan.
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

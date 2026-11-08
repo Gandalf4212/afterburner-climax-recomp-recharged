@@ -6,7 +6,28 @@ with the HUD, 60 FPS, no crash in the owner's tests. Shader cache, F1 menu (blue
 pause while the menu is open, performance overlay, exit watchdog and crash report are in. Details:
 [architecture.md](architecture.md), [native-x-renderer.md](native-x-renderer.md), [development-log.md](development-log.md).
 
-Waiting on the owner: a test of the newest build (menu pause, NativeX after the Xenia selector was removed).
+**Blocking bug (fix before the launcher): every jet is invisible under NativeX** (player jet on the selection screen
+and in stages, enemy jets; engine exhaust, scenery and HUD draw). Not a regression: builds up to 42501639666 defaulted
+to Xenia; build 42503819109 (bedf762) is the first that forces NativeX. Deleting `shaders.cache` and the toml does not
+help. Log 007 (owner's F:\claude2\abc): every draw call drawn, 0 failed or skipped, so the jets' draws are either not
+draw calls NativeX sees or drawn with wrong state.
+
+## Tomorrow, step by step (jets)
+1. Verify capture on the jet selection screen: `--recomp_log=true --native_x_renderer_verify=true`, F10 there
+   (log 007 had no capture: F10 was not pressed). Look at "draw packets from buffers outside the command buffer
+   ring" and the unmatched packets: if the jets' draws are in recorded command buffers, that confirms it.
+2. Likely fix (biggest open NativeX job): draw the contents of recorded command buffers. `RunCommandBuffer`
+   (`822496E0`, hooked, D130) is tracked as a non-draw call; `ScanPackets` already follows its INDIRECT_BUFFERs one
+   level (state.cpp, opcode 0x3F) and counts their DRAW_INDX packets, but the renderer gets no draw for them. Needed:
+   split the call's packets at each DRAW_INDX/DRAW_INDX_2, rebuild the state at each (register writes and SET_CONSTANT
+   before it, the inherited dirty masks the call ANDs at its start), and hand each to the renderer as a draw
+   (`renderer::CaptureDraw` path, like an inline draw's EndVertices). Index/vertex data: from the DRAW_INDX packet and
+   the fetch constants in the buffer. Also check `82243950` (14 sites, 3 INDIRECT_BUFFERs from device +13992..+15028).
+3. Other possibility to rule out with the capture: SET_CONSTANT with bin predication (BeginShaderConstantF4 ORs in the
+   predication at +12892, set inside tiled passes) goes to `predicated_writes`, which `StateTracker::Gather` ignores:
+   the jets' matrices would then be stale. If so, apply predicated float-constant writes for non-draw calls.
+4. Until fixed, consider putting the Renderer choice back (NativeX default, Xenia fallback) so the game stays playable.
+5. Owner to test once: the F1 pause, and the widened menu (commit after bedf762, not built yet: [skip ci]).
 
 ## Known gaps (NativeX)
 - Draws inside recorded command buffers (RunCommandBuffer, ~570 draw packets a frame) are tracked, not drawn. The
@@ -15,7 +36,7 @@ Waiting on the owner: a test of the newest build (menu pause, NativeX after the 
 - No DLSS / FSR 3.1 / frame generation (needs the 3D view and motion mapped). The game steps its logic once per
   frame: above 60 FPS would need render interpolation of game states.
 
-## Next: the launcher (owner's plan, starting 2026-11-09)
+## After the jets: the launcher (owner's plan)
 Turn the repository into one that holds **no recompiled game code**: a launcher that builds the game on the user's PC
 from their own package, like
 [mushihimesama-futari-black-label-recomp v0.8.0](https://github.com/Gandalf4212/mushihimesama-futari-black-label-recomp/releases/tag/v0.8.0)
