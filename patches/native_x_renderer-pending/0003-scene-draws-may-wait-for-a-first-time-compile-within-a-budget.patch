@@ -1,0 +1,181 @@
+From 7a827f9258fe6d4b47a86c8587ceaadf44b6e114 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 7 Nov 2026 14:06:16 -0500
+Subject: [PATCH] Scene draws may wait for a first-time compile, within a
+ budget per frame (D116)
+
+---
+ docs/decisions.md | 16 ++++++++++++++++
+ src/draw.cpp      | 18 +++++++++++++++---
+ src/draw.h        | 10 ++++++++++
+ src/renderer.cpp  | 15 +++++++++++++--
+ 4 files changed, 54 insertions(+), 5 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index e57a1c7..8171f78 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -3900,3 +3900,19 @@ play; it now copies pointers only. A burst of new translations in play boosts th
+ so the shipped microcode cannot be translated ahead; their variants are kept as the game uses them. The pixel
+ translations are guesses (no MSAA centroids, no PsParamGen); what draws ask that was not guessed is translated as
+ before and kept.
++
++## D116 — Scene draws may wait for a first-time compile, within a budget per frame (2026-11-07, Mad Riders)
++
++**Decision:** `native_x_renderer_scene_wait_ms` (default 0, as before): the draws that D101 does not make wait (the
++scene's) also wait for their shaders' translation and their pipeline, as long as the frame's total wait stays within
++that many milliseconds; past it they are skipped (D28, D34) until the compile is done. The offscreen waits of D101
++are unchanged (and not counted). The log's line counts the scene draws that waited and how long.
++
++**Why:** Mad Riders, first run with the shader cache (D115) prepared: what is left to compile while racing is the
++vertex shaders' variants for each vertex layout (the game's D3D patches their fetches, so they cannot be compiled
++ahead) and their pipelines, about 70-130 skipped draws per 10 s on a first lap: objects blinking out and back. The
++offscreen draws that already wait took 5.6 ms on average: most compiles fit a few milliseconds of a frame. Waiting
++without a budget (D101 on every draw) made each new pipeline a visible stall (Mad Riders, 2026-11-03).
++
++**Revisit if:** a game's compiles are mostly longer than a frame: the budget then only delays the frame without
++saving the draw.
+diff --git a/src/draw.cpp b/src/draw.cpp
+index 863d500..cc359ff 100644
+--- a/src/draw.cpp
++++ b/src/draw.cpp
+@@ -913,7 +913,14 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+   // D101: a draw into an offscreen target waits for its translations (the workers finish them on their own).
+   const auto wait_start = std::chrono::steady_clock::now();
+   bool waited = false;
+-  while (translating && wait_for_pipelines_ && std::chrono::steady_clock::now() - wait_start < kPipelineWaitLimit) {
++  // D116: the other draws wait too, within what is left of the frame's budget (short compiles do not show).
++  auto may_wait = [&] {
++    auto elapsed = std::chrono::steady_clock::now() - wait_start;
++    if (elapsed >= kPipelineWaitLimit) return false;
++    if (wait_for_pipelines_) return true;
++    return std::chrono::duration<double, std::milli>(elapsed).count() < scene_wait_left_ms_;
++  };
++  while (translating && may_wait()) {
+     waited = true;
+     std::this_thread::sleep_for(std::chrono::microseconds(200));
+     translating = false;
+@@ -1105,13 +1112,17 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+     return false;
+   }
+   // D101: a draw into an offscreen target waits for its pipeline (DiligentCore's threads compile it).
+-  while (wait_for_pipelines_ && !pipeline->failed && !pipelines_->Ready(*pipeline) &&
+-         std::chrono::steady_clock::now() - wait_start < kPipelineWaitLimit) {
++  while (!pipeline->failed && !pipelines_->Ready(*pipeline) && may_wait()) {
+     waited = true;
+     std::this_thread::sleep_for(std::chrono::microseconds(200));
+   }
+   if (waited) {
+     double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wait_start).count();
++    if (!wait_for_pipelines_) {
++      scene_wait_left_ms_ = std::max(0.0, scene_wait_left_ms_ - ms);
++      ++stats_.scene_waited;
++      stats_.scene_waited_ms += ms;
++    }
+     ++stats_.waited;
+     stats_.waited_ms += ms;
+     stats_.max_waited_ms = std::max(stats_.max_waited_ms, ms);
+@@ -1709,6 +1720,7 @@ void DrawPath::EndFrame() {
+   // cache saved, on a thread of its own (D45), once nothing new was compiled for 10 s (at 60 FPS), and at
+   // most every 5 minutes (D52): new areas bring pipelines every few seconds, and each save writes tens of
+   // MB. What is not saved yet is in the records, compiled again at the next start.
++  scene_wait_left_ms_ = scene_wait_budget_ms_;  // D116
+   if (storage_) storage_->Flush();
+   // A burst of new translations in play (a new area, D115): every core but one on them until it is through, so
+   // their draws are skipped for fewer frames.
+diff --git a/src/draw.h b/src/draw.h
+index 75c1e56..aeb1979 100644
+--- a/src/draw.h
++++ b/src/draw.h
+@@ -139,6 +139,12 @@ class DrawPath {
+   // The next draw waits for its shaders' translation and its pipeline instead of being skipped (D101): a draw into
+   // an offscreen target, which may be drawn once and resolved (a mask, a blurred copy of the scene).
+   void SetWaitForPipelines(bool on) { wait_for_pipelines_ = on; }
++  // D116: the other draws wait for their shaders and pipeline too, up to this many milliseconds per frame in all
++  // (then they are skipped, D28/D34): a compile that finishes within it does not show. 0: skipped at once.
++  void SetSceneWaitBudget(double ms) {
++    scene_wait_budget_ms_ = ms;
++    scene_wait_left_ms_ = ms;
++  }
+   // The float constants that hold a texture's size (Profile::texture_size_constants, D93).
+   void SetTextureSizeConstants(const Profile::TextureSizeConstant* constants, uint32_t count) {
+     texture_size_constants_ = std::span(constants, count);
+@@ -155,6 +161,9 @@ class DrawPath {
+     // Draws that waited for their shaders or pipeline instead (D101), and how long.
+     uint32_t waited = 0;
+     double waited_ms = 0.0, max_waited_ms = 0.0;
++    // Of them, the scene's draws that waited within the frame's budget (D116), and how long in all.
++    uint32_t scene_waited = 0;
++    double scene_waited_ms = 0.0;
+     // Texture bindings: resolved, guest, placeholders, and placeholders for the other dimension's binding.
+     uint32_t textures_resolved = 0, textures_guest = 0, textures_placeholder = 0, textures_other_dimension = 0;
+     uint32_t copies = 0;  // buffer copies (guest memory pages, converted indices)
+@@ -221,6 +230,7 @@ class DrawPath {
+   RenderScale scale_;  // D37
+   bool aspect_box_ = false;  // D43
+   bool wait_for_pipelines_ = false;  // D101
++  double scene_wait_budget_ms_ = 0.0, scene_wait_left_ms_ = 0.0;  // D116
+   bool jitter_on_ = false;   // D47
+   float jitter_[2] = {};
+   uint32_t jitter_size_[2] = {};
+diff --git a/src/renderer.cpp b/src/renderer.cpp
+index a6172c8..bf5d2ea 100644
+--- a/src/renderer.cpp
++++ b/src/renderer.cpp
+@@ -74,6 +74,10 @@ REXCVAR_DEFINE_BOOL(native_x_renderer_pipeline_storage, true, "NativeXRenderer",
+ REXCVAR_DEFINE_BOOL(native_x_renderer_wait_offscreen_pipelines, true, "NativeXRenderer",
+                     "A draw into a target not of the game's output size (post-processing, masks, shadows) waits for "
+                     "its shaders and pipeline instead of being skipped (D101); false: skipped, as the scene's draws");
++REXCVAR_DEFINE_DOUBLE(native_x_renderer_scene_wait_ms, 0.0, "NativeXRenderer",
++                      "The milliseconds per frame the other draws may wait, in all, for a shader or pipeline compiled "
++                      "for the first time, before they are skipped (D116): compiles that finish within it do not show "
++                      "as objects popping in. 0: skipped at once (no stutter)");
+ REXCVAR_DEFINE_BOOL(native_x_renderer_fill_screen, true, "NativeXRenderer",
+                     "Fill an output that is not 16:9, with a render scale per axis, when the game's hooks widen its "
+                     "cameras (read at startup); false: the 16:9 image with bars");
+@@ -313,6 +317,8 @@ struct Creation {
+   // Draws into offscreen targets that waited for their shaders and pipeline instead (D101), and how long.
+   uint64_t waited_draws = 0;
+   double waited_ms = 0.0, max_waited_ms = 0.0;
++  uint64_t scene_waited_draws = 0;  // of them, scene draws within the frame's budget (D116)
++  double scene_waited_ms = 0.0;
+ } g_creation;
+ 
+ // Buffer copies (each ends the render pass) and guest memory uploads per frame, since the last log line.
+@@ -515,6 +521,7 @@ bool EnsureDrawPath() {
+   }
+   g_draw = std::move(draw);
+   g_draw->SetUploadAhead(UploadAhead);
++  g_draw->SetSceneWaitBudget(std::max(0.0, REXCVAR_GET(native_x_renderer_scene_wait_ms)));
+   g_draw->SetTextureSizeConstants(g_profile->texture_size_constants, g_profile->texture_size_constant_count);
+   return true;
+ }
+@@ -1664,6 +1671,8 @@ void ExecuteFrameEnd(const Command& c) {
+   g_creation.translating_draws += draws.translating;
+   g_creation.compiling_draws += draws.compiling;
+   g_creation.waited_draws += draws.waited;
++  g_creation.scene_waited_draws += draws.scene_waited;
++  g_creation.scene_waited_ms += draws.scene_waited_ms;
+   g_creation.waited_ms += draws.waited_ms;
+   g_creation.max_waited_ms = std::max(g_creation.max_waited_ms, draws.max_waited_ms);
+   ++g_uploads.frames;
+@@ -1774,12 +1783,14 @@ void ExecuteFrameEnd(const Command& c) {
+     REXLOG_INFO("[native_x_renderer] renderer: frame {}: created on the render thread: {} shader analyses ({:.1f} ms, "
+                 "max {:.1f}), {} pipelines ({:.1f} ms, max {:.1f}); on worker threads: {} translations ({:.1f} ms, "
+                 "max {:.1f}); draws skipped: {} while a shader was translated, {} while their pipeline compiled; "
+-                "offscreen draws that waited for theirs (D101): {} ({:.1f} ms, max {:.1f})",
++                "draws that waited for theirs: {} ({:.1f} ms, max {:.1f}), of them {} scene draws within the frame's "
++                "budget (D116, {:.1f} ms)",
+                 frame, g_creation.analyses.count, g_creation.analyses.ms, g_creation.analyses.max_ms,
+                 g_creation.pipelines.count, g_creation.pipelines.ms, g_creation.pipelines.max_ms,
+                 g_creation.translations.count, g_creation.translations.ms, g_creation.translations.max_ms,
+                 g_creation.translating_draws, g_creation.compiling_draws, g_creation.waited_draws,
+-                g_creation.waited_ms, g_creation.max_waited_ms);
++                g_creation.waited_ms, g_creation.max_waited_ms, g_creation.scene_waited_draws,
++                g_creation.scene_waited_ms);
+     g_creation = {};
+     if (g_queries_on) {
+       OcclusionQueries::Stats q = g_queries.TakeStats();
+-- 
+2.43.0
+

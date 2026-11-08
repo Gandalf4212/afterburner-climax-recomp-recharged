@@ -33,9 +33,9 @@ State of branch `nativex` at the end of session 1, and what to do next. Update t
    TextureUnlock, NewSegment, SetShaderGPRAllocation, occlusion queries (EVENT_WRITE_ZPD in engine code
    `82298838`, `8232AC70`), the two other draw functions `82249308`/`822496E0` (UP draws?), resource object
    layout (assumed 7978's). Candidates to confirm: SetViewport `8223F300`, BeginTiling `8224DC78`,
-   EndTiling `82248DB0`. Method: NativeX `docs/integrating-a-game.md`; Mad Riders' table is a good model.
+   EndTiling `82248DB0`. Method: NativeX `docs/integrating-a-game.md`; Mad Riders' table (`docs/reference/mad-riders/native-x-renderer.md`) is a good model.
 2. When NativeX draws correctly: make it the default renderer.
-3. Shader cache (Mad Riders `patches/native_x_renderer/0001-0004`, `src/shader_scan.cpp`): tested against
+3. Shader cache (`patches/native_x_renderer-pending/0001-0004`, models in `docs/reference/mad-riders/`): tested against
    bf965e9, none apply as-is. 0001 (scene size/AA) overlaps upstream D126 (merge by hand); 0002 (cache core,
    ~2500 lines) only 1 code hunk + docs; 0003/0004 after those. Rebase on a test branch: apply on 5aa5a05,
    `git rebase bf965e9`. A shader scanner for this game's data format must be written (Mad Riders' reads

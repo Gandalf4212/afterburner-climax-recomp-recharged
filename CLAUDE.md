@@ -10,7 +10,8 @@ Read `docs/HANDOFF.md` first (current state, next steps), then `docs/development
 - Tell the owner before big builds (every push to `main`/`nativex` builds on GitHub Actions) and before big features.
 - Docs-only commits: put `[skip ci]` in the message.
 - Work on branch `nativex`. Commit as Gandalf4212 <gandalf4212@gmail.com>.
-- mad-riders-recomp (github.com/Gandalf4212/mad-riders-recomp) is a read-only reference; never modify it.
+- Everything needed from mad-riders-recomp is copied into `docs/reference/mad-riders/` and
+  `patches/native_x_renderer-pending/`; that repo is not needed (read-only if ever consulted).
 - Keep `docs/development-log.md` updated: what, why, evidence (addresses, versions, results).
 - The owner tests on Windows; game files in `F:\claude2\abc` (World package `58410A06\000D0000\C0B8A17E2A438BBE7D63573A04652DA71EE5DE5558`).
   default.xex is not in the repo; extract with `tools/stfs_extract.py <package> assets`.

@@ -1,0 +1,471 @@
+From fd4ab924af1fc13e778b7aa0e148b81c49ad333a Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 7 Nov 2026 14:55:26 -0500
+Subject: [PATCH] Compressed cache records, a burst wait budget, more pipeline
+ threads (D117)
+
+---
+ CMakeLists.txt       |   1 +
+ docs/decisions.md    |  20 ++++++++
+ docs/shader-cache.md |  14 ++++--
+ src/device.cpp       |  10 +++-
+ src/draw.cpp         |  12 ++++-
+ src/draw.h           |   1 +
+ src/lz.cpp           | 109 +++++++++++++++++++++++++++++++++++++++++++
+ src/lz.h             |  21 +++++++++
+ src/shaders.cpp      |   6 +--
+ src/shaders.h        |   2 +-
+ src/storage.cpp      |  47 ++++++++++++++++---
+ src/storage.h        |   7 ++-
+ 12 files changed, 232 insertions(+), 18 deletions(-)
+ create mode 100644 src/lz.cpp
+ create mode 100644 src/lz.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3f9c57e..84c2e2b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -141,6 +141,7 @@ add_library(native_x_renderer STATIC
+     src/guest_textures.cpp
+     src/queries.cpp
+     src/storage.cpp
++    src/lz.cpp
+     src/shader_sources.cpp
+     src/shader_cache_screen.cpp
+     src/draw.cpp
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 8171f78..5eb5328 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -3916,3 +3916,23 @@ without a budget (D101 on every draw) made each new pipeline a visible stall (Ma
+ 
+ **Revisit if:** a game's compiles are mostly longer than a frame: the budget then only delays the frame without
+ saving the draw.
++
++## D117 — Compressed cache records, a burst wait budget, more pipeline threads (2026-11-07, Mad Riders)
++
++**Decision:** (1) translations' SPIR-V and the driver's cache are stored compressed in the shader cache file (`src/lz.h`:
++an LZ77 block format laid out as LZ4's; a blob starting `NXZ1`, so files with uncompressed SPIR-V still read). They
++are compressed by whoever stores them (a worker, the save thread) and decompressed on the worker that makes the host
++shader, or on the preparing thread for the driver's cache: never on the renderer's thread. (2) A frame in which at
++least 8 draws were skipped for compiles lets the next frame's scene draws wait up to 33 ms instead of the D116 budget
++(only when the budget is on). (3) DiligentCore compiles pipelines on cores − 2 threads (4 to 12) instead of 4.
++
++**Why:** Mad Riders after D116: the file was 73 MB after the first launch, 93 MB after a race; the race's start still
++skipped about 2,000 draws for compiles (about 1,460 for pipelines) while lapping skipped 2–22 per 600 frames. A
++burst comes when the frames are slow anyway (the countdown, a menu's first visit), so waiting longer there costs
++little and saves most of those draws; more threads finish the burst sooner.
++
++**Also tried:** compiling the vertex shaders' variants ahead by learning, from played pairs (shipped, as drawn), what
++the game's D3D writes into each vertex fetch, keyed by the shipped fetch instruction, and applying it to the other
++shipped vertex shaders: 21 of 112 variants of a Xenia dump predicted (leave one out). The fetch's meaning is in the
++shader object's vertex element table (usage and index per fetch), not in the instruction; a key by usage would be
++the next attempt.
+diff --git a/docs/shader-cache.md b/docs/shader-cache.md
+index 3bdbb47..44d1d5f 100644
+--- a/docs/shader-cache.md
++++ b/docs/shader-cache.md
+@@ -168,9 +168,9 @@ since the file was last written whole (a record cut short ends the file; the nex
+ | Kind | Key / sub | Bytes |
+ |---|---|---|
+ | `S` shader | microcode hash / – (type: `xenos::ShaderType`) | big-endian microcode |
+-| `T` translation | hash / modification | the translator's SPIR-V (before `PrepareForDiligent`) |
++| `T` translation | hash / modification | the translator's SPIR-V (before `PrepareForDiligent`), compressed (`NXZ1` + `lz.h` block, D117) |
+ | `P` pipeline | XXH3 of the record | `PipelineRecord` (shader hashes and modifications, `PipelineState` with null shaders) |
+-| `V` driver cache | – | DiligentCore's `IPipelineStateCache` data (Vulkan's pipeline cache) |
++| `V` driver cache | – | DiligentCore's `IPipelineStateCache` data (Vulkan's pipeline cache), compressed the same way |
+ | `G` game scanned | the game's fingerprint | – |
+ | `D` device | XXH3 of the GPU's vendor id, device id, name | – (the GPU the `V` record is for) |
+ 
+@@ -187,7 +187,15 @@ from another GPU or driver by itself. Bump `kVersion` in `storage.cpp` when a re
+ Sizes (Mad Riders, first launch): 885 shipped shaders, about 2,000 guessed pixel translations; expect tens of MB
+ with the driver's cache.
+ 
+-## 5. Changing it
++## 5. While the game runs (first visits)
++
++What the cache cannot know ahead (vertex shader variants per vertex layout, pipelines of new state combinations) is
++compiled when first drawn. Those draws wait within a per-frame budget (`native_x_renderer_scene_wait_ms`, D116; a
++game exposes it as a setting, Mad Riders' F1 > New shaders, 8 ms by default) and are skipped past it; a frame with 8 or
++more skipped draws lets the next one wait up to 33 ms (a burst: a race's start, D117). Pipelines compile on cores − 2
++threads (4–12), translations on 2 workers, every core but one during a burst of more than 4.
++
++## 6. Changing it
+ 
+ - A new kind of record: add a `Kind`, write it with `AddLocked` (journaled) or like `SetDriverCache` (only with the
+   whole file), read it in `Open`'s final loop.
+diff --git a/src/device.cpp b/src/device.cpp
+index 3970ac9..df178f3 100644
+--- a/src/device.cpp
++++ b/src/device.cpp
+@@ -4,6 +4,9 @@
+ 
+ #include "queries.h"
+ 
++#include <algorithm>
++#include <thread>
++
+ #include <rex/cvar.h>
+ #include <rex/logging.h>
+ 
+@@ -87,7 +90,12 @@ bool Device::Create(void* native_window) {
+   // Pipelines compile in DiligentCore's thread pool (D28). A few threads: new pipelines come in bursts
+   // (a level, a new effect), and the game's own threads need the CPU.
+   create_info.Features.AsyncShaderCompilation = DEVICE_FEATURE_STATE_OPTIONAL;
+-  create_info.NumAsyncShaderCompilationThreads = 4;
++  // D117: pipelines compile on these (D28); more on CPUs that have the cores, so a burst of new pipelines (a race's
++  // start) is through sooner. They sleep when there is nothing to compile.
++  {
++    unsigned cores = std::max(1u, std::thread::hardware_concurrency());
++    create_info.NumAsyncShaderCompilationThreads = std::clamp(cores > 2 ? cores - 2 : 1u, 4u, 12u);
++  }
+   // Every draw maps its constant buffers from the dynamic heap (system, bool/loop and fetch constants:
+   // 1.4 KB, plus the float constants its shaders use), with several frames in flight.
+   create_info.DynamicHeapSize = 256 << 20;
+diff --git a/src/draw.cpp b/src/draw.cpp
+index cc359ff..01cd52c 100644
+--- a/src/draw.cpp
++++ b/src/draw.cpp
+@@ -122,6 +122,9 @@ uint8_t Stencil(xenos::StencilOp op) { return uint8_t(uint32_t(op) + 1); }
+ // The longest a draw into an offscreen target waits for its translations and pipeline before it is skipped after all
+ // (D101): a pipeline the driver has never seen takes up to a few hundred milliseconds.
+ constexpr std::chrono::milliseconds kPipelineWaitLimit{3000};
++// D117: a frame with this many draws skipped for compiles lets the next one wait this long (scene draws, D116).
++constexpr uint32_t kBurstSkips = 8;
++constexpr double kBurstWaitMs = 33.0;
+ 
+ constexpr uint32_t kBoolLoopConstantsSize = (8 + 32) * 4;
+ constexpr uint32_t kFetchConstantsSize = 32 * 6 * 4;
+@@ -943,6 +946,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+   }
+   if (translating) {
+     ++stats_.translating;
++    ++frame_skipped_;
+     return false;
+   }
+ 
+@@ -1130,6 +1134,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+   if (!pipelines_->Ready(*pipeline)) {
+     // Still compiling (D28), or failed (logged): the draw is skipped.
+     ++(pipeline->failed ? stats_.failed : stats_.compiling);
++    if (!pipeline->failed) ++frame_skipped_;
+     return false;
+   }
+ 
+@@ -1720,7 +1725,12 @@ void DrawPath::EndFrame() {
+   // cache saved, on a thread of its own (D45), once nothing new was compiled for 10 s (at 60 FPS), and at
+   // most every 5 minutes (D52): new areas bring pipelines every few seconds, and each save writes tens of
+   // MB. What is not saved yet is in the records, compiled again at the next start.
+-  scene_wait_left_ms_ = scene_wait_budget_ms_;  // D116
++  // D116; D117: while many draws wait for compiles (a race's start, a menu's first visit, where the frames are slow
++  // anyway), the next frame may wait up to the burst budget, so fewer of them are skipped.
++  scene_wait_left_ms_ = scene_wait_budget_ms_ > 0.0 && frame_skipped_ >= kBurstSkips
++                            ? std::max(scene_wait_budget_ms_, kBurstWaitMs)
++                            : scene_wait_budget_ms_;
++  frame_skipped_ = 0;
+   if (storage_) storage_->Flush();
+   // A burst of new translations in play (a new area, D115): every core but one on them until it is through, so
+   // their draws are skipped for fewer frames.
+diff --git a/src/draw.h b/src/draw.h
+index aeb1979..474bf2b 100644
+--- a/src/draw.h
++++ b/src/draw.h
+@@ -231,6 +231,7 @@ class DrawPath {
+   bool aspect_box_ = false;  // D43
+   bool wait_for_pipelines_ = false;  // D101
+   double scene_wait_budget_ms_ = 0.0, scene_wait_left_ms_ = 0.0;  // D116
++  uint32_t frame_skipped_ = 0;  // draws skipped for compiles in this frame (D117)
+   bool jitter_on_ = false;   // D47
+   float jitter_[2] = {};
+   uint32_t jitter_size_[2] = {};
+diff --git a/src/lz.cpp b/src/lz.cpp
+new file mode 100644
+index 0000000..5d1f4bb
+--- /dev/null
++++ b/src/lz.cpp
+@@ -0,0 +1,109 @@
++// NativeXRenderer - see lz.h.
++
++#include "lz.h"
++
++#include <cstring>
++
++namespace native_x_renderer::lz {
++
++namespace {
++
++constexpr size_t kMinMatch = 4;
++constexpr size_t kLastLiterals = 5;  // the block ends with literals (as LZ4's)
++constexpr unsigned kHashBits = 12;
++
++uint32_t Read32(const uint8_t* p) {
++  uint32_t v;
++  std::memcpy(&v, p, 4);
++  return v;
++}
++uint32_t Hash(uint32_t v) { return (v * 2654435761u) >> (32 - kHashBits); }
++
++void PutLength(std::vector<uint8_t>& out, size_t length) {
++  while (length >= 255) {
++    out.push_back(255);
++    length -= 255;
++  }
++  out.push_back(uint8_t(length));
++}
++
++}  // namespace
++
++void Compress(const uint8_t* data, size_t size, std::vector<uint8_t>& out) {
++  out.clear();
++  out.reserve(size / 2 + 16);
++  for (int i = 0; i < 4; ++i) out.push_back(uint8_t(size >> (8 * i)));
++  uint32_t table[1u << kHashBits];
++  std::memset(table, 0xFF, sizeof(table));
++  size_t anchor = 0, pos = 0;
++  const size_t limit = size > kLastLiterals + kMinMatch ? size - kLastLiterals - kMinMatch : 0;
++  auto emit = [&](size_t literal_end, size_t offset, size_t match_length) {
++    size_t literals = literal_end - anchor;
++    size_t token_match = match_length ? match_length - kMinMatch : 0;
++    uint8_t token = uint8_t((literals >= 15 ? 15 : literals) << 4) | uint8_t(token_match >= 15 ? 15 : token_match);
++    out.push_back(token);
++    if (literals >= 15) PutLength(out, literals - 15);
++    out.insert(out.end(), data + anchor, data + literal_end);
++    if (!match_length) return;
++    out.push_back(uint8_t(offset));
++    out.push_back(uint8_t(offset >> 8));
++    if (token_match >= 15) PutLength(out, token_match - 15);
++  };
++  while (pos < limit) {
++    uint32_t value = Read32(data + pos);
++    uint32_t h = Hash(value);
++    size_t candidate = table[h];
++    table[h] = uint32_t(pos);
++    if (candidate != 0xFFFFFFFFu && pos - candidate <= 0xFFFF && Read32(data + candidate) == value) {
++      size_t length = kMinMatch;
++      const size_t max = size - kLastLiterals - pos;
++      while (length < max && data[candidate + length] == data[pos + length]) ++length;
++      emit(pos, pos - candidate, length);
++      pos += length;
++      anchor = pos;
++      continue;
++    }
++    ++pos;
++  }
++  emit(size, 0, 0);
++}
++
++bool Decompress(const uint8_t* data, size_t size, std::vector<uint8_t>& out) {
++  if (size < 4) return false;
++  size_t expected = size_t(data[0]) | size_t(data[1]) << 8 | size_t(data[2]) << 16 | size_t(data[3]) << 24;
++  std::vector<uint8_t> result(expected);
++  size_t in = 4, at = 0;
++  auto length = [&](size_t base, size_t& value) {
++    value = base;
++    if (base != 15) return true;
++    uint8_t b;
++    do {
++      if (in >= size) return false;
++      b = data[in++];
++      value += b;
++    } while (b == 255);
++    return true;
++  };
++  while (in < size) {
++    uint8_t token = data[in++];
++    size_t literals;
++    if (!length(token >> 4, literals) || literals > size - in || literals > expected - at) return false;
++    std::memcpy(result.data() + at, data + in, literals);
++    in += literals;
++    at += literals;
++    if (in >= size) break;  // the last sequence: literals only
++    if (size - in < 2) return false;
++    size_t offset = size_t(data[in]) | size_t(data[in + 1]) << 8;
++    in += 2;
++    size_t match;
++    if (!offset || offset > at || !length(token & 15, match)) return false;
++    match += kMinMatch;
++    if (match > expected - at) return false;
++    for (size_t i = 0; i < match; ++i, ++at) result[at] = result[at - offset];  // may overlap
++  }
++  if (at != expected) return false;
++  out.swap(result);
++  return true;
++}
++
++}  // namespace native_x_renderer::lz
+diff --git a/src/lz.h b/src/lz.h
+new file mode 100644
+index 0000000..7439a6b
+--- /dev/null
++++ b/src/lz.h
+@@ -0,0 +1,21 @@
++// NativeXRenderer - a small LZ77 block compressor for the shader cache file (internal, D117).
++//
++// The LZ4 block format's layout (token, literal run, 16-bit offset, match run), written from scratch: greedy
++// matching through a 4096-entry hash table, compressing at hundreds of MB/s and decompressing faster. SPIR-V is
++// repetitive (ids, decorations, the same instruction shapes), so it shrinks several times. Decompression runs on
++// the shader workers (the stored SPIR-V of a translation) and on the preparing thread (the driver's cache), never on
++// the renderer's thread.
++#pragma once
++
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++namespace native_x_renderer::lz {
++
++// `out` gets the uncompressed size (4 bytes, little-endian) then the compressed block.
++void Compress(const uint8_t* data, size_t size, std::vector<uint8_t>& out);
++// False if `data` is not a valid block (then `out` is unchanged).
++bool Decompress(const uint8_t* data, size_t size, std::vector<uint8_t>& out);
++
++}  // namespace native_x_renderer::lz
+diff --git a/src/shaders.cpp b/src/shaders.cpp
+index a23382c..9b04471 100644
+--- a/src/shaders.cpp
++++ b/src/shaders.cpp
+@@ -254,9 +254,9 @@ void ShaderCache::Translate(rg::SpirvShaderTranslator& translator, const Job& jo
+   auto bindings_written = [&] {
+     if (job.sets_bindings && job.bindings) job.bindings->ready.store(true, std::memory_order_release);
+   };
+-  if (!job.stored.empty()) {
+-    // From the cache file (D115): the SPIR-V the translator made for this modification in an earlier run.
+-    job.host->spirv = std::move(const_cast<Job&>(job).stored);
++  // From the cache file (D115): the SPIR-V the translator made for this modification in an earlier run,
++  // decompressed here, on the worker (D117). If it does not unpack, it is translated again.
++  if (!job.stored.empty() && PipelineStorage::Unpack(job.stored, job.host->spirv)) {
+     loaded_.fetch_add(1, std::memory_order_relaxed);
+   } else {
+     bool translated = false;
+diff --git a/src/shaders.h b/src/shaders.h
+index 05e8b34..af07b8f 100644
+--- a/src/shaders.h
++++ b/src/shaders.h
+@@ -130,7 +130,7 @@ class ShaderCache {
+     HostShader* host = nullptr;
+     bool motion = false;           // the motion vertex shader of a translation already made
+     const HostShader* base = nullptr;  // motion: the translation's host shader (ready)
+-    std::vector<uint32_t> stored;  // the translation's SPIR-V from the cache file (D115), empty if none
++    std::vector<uint8_t> stored;  // the translation's SPIR-V from the cache file, as stored (D115, D117)
+   };
+ 
+   void Worker(unsigned index);
+diff --git a/src/storage.cpp b/src/storage.cpp
+index e1e3b0f..31482d1 100644
+--- a/src/storage.cpp
++++ b/src/storage.cpp
+@@ -2,6 +2,8 @@
+ 
+ #include "storage.h"
+ 
++#include "lz.h"
++
+ #include <rex/logging.h>
+ 
+ #include <cstring>
+@@ -19,6 +21,19 @@ constexpr char kMagic[8] = {'N', 'X', 'R', 'C', 'A', 'C', 'H', 'E'};
+ // Bump when what a record means changes: PipelineState's layout or its DiligentCore enums, the
+ // translator's modification bits, the host formats, the records themselves (3: one indexed file, D115).
+ constexpr uint32_t kVersion = 3;
++// D117: a blob that starts with this is compressed (lz.h); SPIR-V as older files kept it starts with 0x07230203.
++constexpr uint8_t kPacked[4] = {'N', 'X', 'Z', '1'};
++
++std::vector<uint8_t> Pack(const void* data, size_t size) {
++  std::vector<uint8_t> packed;
++  lz::Compress(static_cast<const uint8_t*>(data), size, packed);
++  packed.insert(packed.begin(), kPacked, kPacked + 4);
++  return packed;
++}
++
++bool IsPacked(const std::vector<uint8_t>& bytes) {
++  return bytes.size() >= 8 && std::memcmp(bytes.data(), kPacked, 4) == 0;
++}
+ 
+ struct Header {
+   char magic[8];
+@@ -164,8 +179,9 @@ void PipelineStorage::AddShader(uint8_t type, uint64_t hash, const uint32_t* uco
+ void PipelineStorage::AddTranslation(uint8_t type, uint64_t hash, uint64_t modification, const uint32_t* spirv,
+                                      size_t words) {
+   if (!open_ || !words) return;
++  std::vector<uint8_t> packed = Pack(spirv, words * 4);  // on the calling (worker) thread, outside the lock
+   std::lock_guard<std::mutex> lock(mutex_);
+-  AddLocked(kTranslation, type, hash, modification, spirv, words * 4);
++  AddLocked(kTranslation, type, hash, modification, packed.data(), packed.size());
+ }
+ 
+ void PipelineStorage::AddPipeline(const PipelineRecord& record) {
+@@ -179,10 +195,10 @@ void PipelineStorage::AddPipeline(const PipelineRecord& record) {
+ 
+ void PipelineStorage::SetDriverCache(const void* data, size_t size) {
+   if (!open_) return;
++  auto packed = std::make_shared<const std::vector<uint8_t>>(size ? Pack(data, size) : std::vector<uint8_t>());
+   std::lock_guard<std::mutex> lock(mutex_);
+   // Not journaled: tens of MB, written with the whole file (Compact).
+-  records_[Key{kDriverCache, 0, 0, 0}] = std::make_shared<const std::vector<uint8_t>>(
+-      static_cast<const uint8_t*>(data), static_cast<const uint8_t*>(data) + size);
++  records_[Key{kDriverCache, 0, 0, 0}] = std::move(packed);
+ }
+ 
+ void PipelineStorage::MarkGameScanned(uint64_t fingerprint) {
+@@ -201,19 +217,36 @@ bool PipelineStorage::GameScanned(uint64_t fingerprint) const {
+ }
+ 
+ bool PipelineStorage::FindTranslation(uint8_t type, uint64_t hash, uint64_t modification,
+-                                      std::vector<uint32_t>& spirv) const {
++                                      std::vector<uint8_t>& stored) const {
+   std::lock_guard<std::mutex> lock(mutex_);
+   auto it = records_.find(Key{kTranslation, type, hash, modification});
+   if (it == records_.end() || it->second->size() < 4) return false;
+-  spirv.resize(it->second->size() / 4);
+-  std::memcpy(spirv.data(), it->second->data(), spirv.size() * 4);
++  stored = *it->second;
+   return true;
+ }
+ 
++bool PipelineStorage::Unpack(const std::vector<uint8_t>& stored, std::vector<uint32_t>& spirv) {
++  std::vector<uint8_t> bytes;
++  const std::vector<uint8_t>* source = &stored;
++  if (IsPacked(stored)) {
++    std::vector<uint8_t> body(stored.begin() + 4, stored.end());
++    if (!lz::Decompress(body.data(), body.size(), bytes)) return false;
++    source = &bytes;
++  }
++  if (source->size() < 20 || source->size() % 4) return false;
++  spirv.resize(source->size() / 4);
++  std::memcpy(spirv.data(), source->data(), source->size());
++  return spirv[0] == 0x07230203u;  // the SPIR-V magic
++}
++
+ std::vector<uint8_t> PipelineStorage::DriverCache() const {
+   std::lock_guard<std::mutex> lock(mutex_);
+   auto it = records_.find(Key{kDriverCache, 0, 0, 0});
+-  return it != records_.end() ? *it->second : std::vector<uint8_t>();
++  if (it == records_.end()) return {};
++  if (!IsPacked(*it->second)) return *it->second;
++  std::vector<uint8_t> body(it->second->begin() + 4, it->second->end()), bytes;
++  if (!lz::Decompress(body.data(), body.size(), bytes)) return {};  // the driver starts a new cache
++  return bytes;
+ }
+ 
+ uint64_t PipelineStorage::Device() const {
+diff --git a/src/storage.h b/src/storage.h
+index 559f536..a61047c 100644
+--- a/src/storage.h
++++ b/src/storage.h
+@@ -79,8 +79,11 @@ class PipelineStorage {
+   void MarkGameScanned(uint64_t fingerprint);
+   bool GameScanned(uint64_t fingerprint) const;
+ 
+-  // The stored SPIR-V of a translation; false if there is none. Any thread.
+-  bool FindTranslation(uint8_t type, uint64_t hash, uint64_t modification, std::vector<uint32_t>& spirv) const;
++  // The stored SPIR-V of a translation, as stored (compressed, D117: Unpack it, on a worker thread); false if
++  // there is none. Any thread.
++  bool FindTranslation(uint8_t type, uint64_t hash, uint64_t modification, std::vector<uint8_t>& stored) const;
++  // SPIR-V from what FindTranslation gave (compressed, or as older files stored it). False if it is not valid.
++  static bool Unpack(const std::vector<uint8_t>& stored, std::vector<uint32_t>& spirv);
+   std::vector<uint8_t> DriverCache() const;
+   // The GPU the driver cache was saved with; 0 if none recorded. SetDevice records it (with the whole file).
+   uint64_t Device() const;
+-- 
+2.43.0
+

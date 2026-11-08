@@ -1,0 +1,95 @@
+diff --git a/include/native_x_renderer/native_x_renderer.h b/include/native_x_renderer/native_x_renderer.h
+index a28a7e3..9ed8e48 100644
+--- a/include/native_x_renderer/native_x_renderer.h
++++ b/include/native_x_renderer/native_x_renderer.h
+@@ -126,6 +126,10 @@ struct Profile {
+   ObjectLayout objects;
+   // The game's output resolution (its front buffer): the image the render scale fits to the screen.
+   uint32_t output_width = 1280, output_height = 720;
++  // The size of the target the game draws its scene into, when it is not the output's (Mad Riders: 1280x672 for a
++  // 1280x720 output). Draws into it are scene draws for D101 (skipped while their pipeline is created, not waited
++  // for). 0: the output's size.
++  uint32_t scene_width = 0, scene_height = 0;
+   // The return address of the Resolve call that copies the finished scene: after the game's
+   // post-processing, before its HUD is composited. NativeXRenderer's antialiasing (FXAA or SMAA) is applied to
+   // that copy, a texture of the game's output size (resolves from the same caller to other sizes are not
+@@ -141,6 +145,12 @@ struct Profile {
+   // same texture), only the first one of each frame is antialiased (D94): the post-processing after it adds no edges.
+   // False: every one.
+   bool scene_resolve_once = false;
++  // The finished scene is copied into a texture of the profile's scene size (scene_width/height), not of the output's,
++  // and drawn into the output's target before the HUD (Mad Riders: the scene and its post-processing at 1280x672,
++  // composited into the 1280x720 frame; every resolve goes through one engine function). The antialiasing is then
++  // applied to the newest such copy from scene_resolve_caller when the first draw into a target of the output's size
++  // comes, instead of at a resolve of the output's size. False: as D41.
++  bool scene_resolve_before_output = false;
+   // The game's hooks widen its 16:9 cameras by AspectFactor() (D43): NativeXRenderer then fills an output of any
+   // aspect ratio, with a separate render scale per axis, instead of showing the 16:9 image with bars.
+   bool widens_cameras = false;
+diff --git a/src/renderer.cpp b/src/renderer.cpp
+index 7b1be3d..77ce34d 100644
+--- a/src/renderer.cpp
++++ b/src/renderer.cpp
+@@ -127,6 +127,9 @@ rex::ui::Window* g_window = nullptr;
+ DisplayGamma g_gamma;  // the guest's display gamma ramp, applied when presenting (D36)
+ Antialiasing g_aa;     // on the finished scene (D41)
+ bool g_scene_antialiased = false;  // this frame's scene copy antialiased already (Profile::scene_resolve_once, D94)
++// Profile::scene_resolve_before_output: the newest scene-size copy from the scene's caller, antialiased when the frame
++// first draws into a target of the output's size (0: none pending).
++uint32_t g_pending_scene_copy = 0;
+ Upscaler g_upscaler;   // NVIDIA DLSS (Phase 5, D46)
+ OcclusionQueries g_queries;  // the guest's occlusion queries (D32)
+ bool g_queries_on = false;
+@@ -506,6 +509,20 @@ void ExecuteDraw(const Command& c) {
+     g_draw->SetUploadAhead(UploadAhead);
+     g_draw->SetTextureSizeConstants(g_profile->texture_size_constants, g_profile->texture_size_constant_count);
+   }
++  // Profile::scene_resolve_before_output: the scene's copy is antialiased before it is drawn into the frame.
++  if (g_pending_scene_copy && g_aa.mode() != Antialiasing::Mode::kOff) {
++    const GuestSurface first = Tiled(c.surfaces[0] ? c.surfaces[0] : c.surfaces[4]);
++    if (first.width == g_profile->output_width && first.height == g_profile->output_height) {
++      if (ResolvedTexture* copy = g_resolved.FindNewest(g_pending_scene_copy, false)) {
++        if (ITextureView* view = copy->SliceView(0)) {
++          g_aa.Apply(g_device->context(), copy->texture, view);
++          g_scene_antialiased = true;
++          g_draw->TargetsChanged();
++        }
++      }
++      g_pending_scene_copy = 0;
++    }
++  }
+   std::array<HostTarget*, 5> targets;
+   const HostTarget* first_target = nullptr;
+   for (uint32_t i = 0; i < 5; ++i) targets[i] = TargetFor(Tiled(c.surfaces[i]), BindingOf(c));
+@@ -517,9 +534,12 @@ void ExecuteDraw(const Command& c) {
+   // D101: a draw into a target of another size than the game's output (the first color target, else depth) waits for
+   // its pipeline. Such passes may be drawn once and resolved: GH Metallica's post-processing mask, drawn at the
+   // career's first song load, showed garbage for the session when its draw was skipped on a first run.
+-  g_draw->SetWaitForPipelines(REXCVAR_GET(native_x_renderer_wait_offscreen_pipelines) && first_target &&
+-                              (first_target->guest_width != g_profile->output_width ||
+-                               first_target->guest_height != g_profile->output_height));
++  const bool scene_size =
++      first_target && ((first_target->guest_width == g_profile->output_width &&
++                        first_target->guest_height == g_profile->output_height) ||
++                       (g_profile->scene_width && first_target->guest_width == g_profile->scene_width &&
++                        first_target->guest_height == g_profile->scene_height));
++  g_draw->SetWaitForPipelines(REXCVAR_GET(native_x_renderer_wait_offscreen_pipelines) && first_target && !scene_size);
+   g_draw->SetAspectBox(g_aspect_box);
+   bool scene = g_scene_view && g_dlss;
+   g_draw->SetJitter(scene, g_upscaler.jitter_x(), g_upscaler.jitter_y(), g_profile->output_width,
+@@ -826,8 +846,13 @@ void ExecuteResolve(const Command& c) {
+   }
+   // The copy of the finished scene (the profile's scene_resolve_caller): antialiased in place (D41).
+   // It is of the game's output size (D65).
+-  if (g_aa.mode() != Antialiasing::Mode::kOff && c.scene_caller && slice == 0 &&
+-      target->guest_width == g_profile->output_width &&
++  if (g_profile->scene_resolve_before_output && c.scene_caller && slice == 0 && !surface.depth &&
++      g_profile->scene_width && target->guest_width == g_profile->scene_width &&
++      target->guest_height == g_profile->scene_height) {
++    g_pending_scene_copy = target->address;
++  }
++  if (!g_profile->scene_resolve_before_output && g_aa.mode() != Antialiasing::Mode::kOff && c.scene_caller &&
++      slice == 0 && target->guest_width == g_profile->output_width &&
+       target->guest_height == g_profile->output_height &&
+       !(g_profile->scene_resolve_once && g_scene_antialiased)) {
+     g_aa.Apply(g_device->context(), target->texture, target_view);
