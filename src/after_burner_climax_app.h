@@ -27,6 +27,13 @@
 #include "game_menu.h"
 #include "package_setup.h"
 
+#ifdef ABC_NATIVE_X_RENDERER
+#include <native_x_renderer/native_x_renderer.h>
+namespace after_burner_climax {
+const native_x_renderer::Profile& NativeXRendererProfile();
+}
+#endif
+
 class AfterBurnerClimaxApp : public rex::ReXApp {
  public:
   using rex::ReXApp::ReXApp;
@@ -131,6 +138,13 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
 
   // The game must not see keys/buttons while the menu is open.
   void OnPostSetup() override {
+#ifdef ABC_NATIVE_X_RENDERER
+    // Always initialized: with native_x_renderer off it only arms what --native_x_renderer_trace / _verify ask for.
+    native_x_renderer::Initialize(after_burner_climax::NativeXRendererProfile(),
+                                  runtime() ? runtime()->graphics_system() : nullptr, window(),
+                                  runtime() ? runtime()->cache_root() : std::filesystem::path());
+    REXLOG_INFO("Renderer in use: {}", native_x_renderer::Renders() ? "NativeX" : "Xenia");
+#endif
     auto* input_sys = static_cast<rex::input::InputSystem*>(runtime()->input_system());
     if (input_sys && imgui_drawer()) {
       input_sys->SetActiveCallback([this]() {
@@ -143,17 +157,22 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
  private:
   // recomp_renderer (F1 > Renderer): "xenia" = the SDK's Xenos plugin draws
   // (default); "nativex" = NativeXRenderer draws, the Xenos plugin only runs the
-  // command processor it observes. NativeX is not in this build yet, so a
-  // "nativex" choice falls back to Xenia (logged).
+  // command processor it observes.
   static void ApplyRenderer() {
     const std::string r = rex::cvar::Query<std::string>("recomp_renderer");
     if (r != "xenia" && r != "nativex") {
       REXLOG_WARN("recomp_renderer \"{}\" unknown; using xenia", r);
     }
-    if (r == "nativex") {
-      REXLOG_WARN("Renderer: NativeX is not in this build yet; using Xenia");
-    }
+#ifdef ABC_NATIVE_X_RENDERER
+    // NativeX draws; the Xenos plugin's host rendering goes off (it still runs the command processor, and draws
+    // only if NativeXRenderer cannot start: logged). The SDK's shader storage is for the Xenos path.
+    const bool nx = r == "nativex";
+    rex::cvar::SetFlagByName("native_x_renderer", nx ? "true" : "false");
+    if (nx) rex::cvar::SetFlagByName("store_shaders", "false");
+    REXLOG_INFO("Renderer selected: {}", nx ? "NativeX (Vulkan)" : "Xenia (Xenos plugin)");
+#else
     REXLOG_INFO("Renderer: Xenia (Xenos plugin)");
+#endif
   }
 
   // recomp_log (off by default; F1 menu, after_burner_climax.toml, --recomp_log=true).

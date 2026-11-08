@@ -122,6 +122,8 @@ jobs:
             $lic = Get-ChildItem $_.FullName -File -Filter LICENSE* -ErrorAction SilentlyContinue | Select-Object -First 1
             if ($lic) { Copy-Item $lic.FullName ("dist\licenses\LICENSE-" + $_.Name + ".txt") }
           }
+          Copy-Item thirdparty\native_x_renderer\LICENSE dist\licenses\NativeXRenderer-LICENSE.txt
+          Copy-Item thirdparty\native_x_renderer\THIRD_PARTY_NOTICES.md dist\licenses\NativeXRenderer-THIRD_PARTY_NOTICES.md
           Get-ChildItem dist -Recurse | Select-Object -ExpandProperty FullName
 
       - name: Upload build

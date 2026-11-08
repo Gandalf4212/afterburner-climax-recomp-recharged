@@ -69,6 +69,14 @@ rexglue_setup_target(after_burner_climax GPU_PLUGINS xenos)
 # Built from source, the SDK does not pass its ImGui headers on (the menu includes them).
 target_include_directories(after_burner_climax PRIVATE "${REXSDK_DIR}/thirdparty/imgui")
 
+# NativeXRenderer (docs/native-x-renderer.md): built in, used when recomp_renderer = "nativex" (F1 > Renderer).
+# The SDK's Xenos plugin keeps running the command processor it observes; with Xenia selected it draws as before.
+add_subdirectory(thirdparty/native_x_renderer)
+target_sources(after_burner_climax PRIVATE src/native_x_renderer_abc.cpp)
+target_link_libraries(after_burner_climax PRIVATE native_x_renderer)
+target_compile_definitions(after_burner_climax PRIVATE ABC_NATIVE_X_RENDERER=1)
+native_x_renderer_copy_runtime(after_burner_climax)
+
 # CI passes the commit so logs say which build produced them.
 set(ABC_BUILD "" CACHE STRING "Build identifier shown in the log")
 if(ABC_BUILD)

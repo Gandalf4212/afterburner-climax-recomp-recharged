@@ -1,0 +1,3 @@
+[submodule "thirdparty/native_x_renderer"]
+	path = thirdparty/native_x_renderer
+	url = https://github.com/ElGuslml/NativeXRenderer.git

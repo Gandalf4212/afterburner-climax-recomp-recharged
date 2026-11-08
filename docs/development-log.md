@@ -95,7 +95,8 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 - `src/` compiles against the patched v0.10.1 headers (checked on Linux).
 
 ## Next
-- [ ] First CI build on `nativex` (owner tests: boots, audio, quit ends the process).
+- [x] First CI build on `nativex`: success (run 42487839031, 9.5 min).
+- [x] NativeX built in (submodule at bf965e9), F1 > Renderer switches it; hooks + profile in src/native_x_renderer_abc.cpp. Mad Riders NativeX patches tested against bf965e9: none apply as-is; resolvable overlaps (0001 meets upstream D126; 0002 shader cache only 1 code hunk). Merge them in the shader-cache phase.
 - [x] Options menu port (committed 1940c8f, not pushed yet: waits for the first CI result).
 - [~] NativeX mapping: see docs/native-x-renderer.md (device layout = XDK 7978 up to the shadow, current objects 7978 + 168).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
