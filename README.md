@@ -1,43 +1,47 @@
-# After Burner Climax Recompiled
+# After Burner Climax Recomp (Recharged)
 
-Static recompilation of **After Burner Climax** (Xbox 360 XBLA, SEGA AM2, 2010; Title ID 58410A06, default.xex 1.0.0.0 built 2009-12-21) to native Windows, using the [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) v0.9.0.
+A native Windows port of **After Burner Climax** (SEGA AM2, Xbox 360 XBLA, 2010), made by static recompilation: the
+game's PowerPC code is translated to C++ and compiled for x86-64, and its Direct3D calls are drawn with Vulkan by
+[NativeXRenderer](https://github.com/ElGuslml/NativeXRenderer) instead of an emulated GPU.
 
-Two releases are supported, each recompiled separately (their code sits at different addresses):
+**No game data is included.** You need your own After Burner Climax XBLA package, World release (the Xbox 360 LIVE file
+`58410A06\000D0000\C0B8A17E2A438BBE7D63573A04652DA71EE5DE5558`, default.xex 0.0.1.2).
 
-| Release | default.xex | Exe |
-|---|---|---|
-| World (retail XBLA package) | 0.0.1.2, 2,293,760 bytes, SHA-1 `a066b2d6…` | `after_burner_climax_world.exe` (code in `world/generated`) |
-| Original | 1.0.0.0, 2,297,856 bytes, SHA-1 `6f8ba4d7…` | `after_burner_climax.exe` (code in `generated`) |
+## Features
+- Native code (ReXGlue SDK v0.10.1) and native drawing (NativeXRenderer, Vulkan) at the game's own 60 FPS.
+- Any resolution: render scale up to 3x (2560x1440 and 3840x2160 from the 1280x720 original), SMAA or FXAA,
+  texture filtering up to 16x, screen sync choices (fast without tearing, V-Sync, or immediate for G-Sync/FreeSync).
+- Shader cache (`shaders.cache` next to the exe): every shader the game ships is translated on the first start,
+  behind a progress screen; later starts load it in a fraction of a second.
+- Settings menu on **F1 / Esc** (pauses the game), playable with the controller, keyboard or mouse.
+- Performance overlay: FPS, CPU and GPU use, frame-time graph.
+- Keyboard play with rebindable keys; Xbox and other controllers through SDL.
+- Windowed, borderless fullscreen or exclusive fullscreen (F11 toggles).
+- Clean exit (a watchdog ends the process if the SDK's shutdown stalls) and a crash report (`crash.txt`).
 
-Run `after_burner_climax.exe` either way: it checks your `default.xex` and starts the World exe if that's what you have.
-Any other version gets a message naming the supported ones.
+## Playing
+1. Download `after_burner_climax-win-amd64` from the newest successful run of **Build Windows** in the Actions tab
+   (or a release), and unzip it.
+2. Put your package file, or the whole `58410A06` folder copied from the console, next to `after_burner_climax.exe`.
+3. Run `after_burner_climax.exe`. The first start extracts the game into an `assets` folder (the package is not
+   needed after that) and builds the shader cache.
 
-**No game data is included.** You need your own After Burner Climax XBLA package (the Xbox 360 LIVE file from
-your console's storage).
-
-## Download
-Get the latest `AfterBurnerClimax-<version>-win64.zip` from [Releases](https://github.com/darkuni/afterburner-climax-recomp/releases),
-unzip it, put your package file (or the `58410A06` folder copied from the console) in the same folder and run `after_burner_climax.exe`: the first start makes the
-`assets` folder from it. Nothing else to install. Requirements: 64-bit Windows 10/11 and the
+Requirements: 64-bit Windows 10/11, a GPU with Vulkan 1.3, and the
 [Microsoft Visual C++ Redistributable 2015-2022 (x64)](https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
-## Building
-GitHub Actions builds on every push to `main` (or run **Build Windows** by hand from the Actions tab); publishing a
-release attaches the zip to it. Unzip a build and put your extracted game files in an `assets` folder next to the exe
-(`tools/stfs_extract.py <package> assets` extracts the package):
+### Settings (F1 or Esc)
+LB/RB (keyboard Q/E) switch category, Up/Down pick a row, Left/Right or A/Enter change it, B/Backspace close.
+Saved to `after_burner_climax.toml` next to the exe (editable by hand while the game is closed).
 
-```
-after_burner_climax.exe
-*.dll
-assets\
-  default.xex
-  media\...
-```
+| Category | Settings |
+|---|---|
+| Display | Display mode (Windowed / Borderless fullscreen / Fullscreen), window size, render resolution, screen sync |
+| Graphics | Anti-aliasing (SMAA / FXAA / off), texture filtering, new shaders (how long a frame may wait for a first-time shader compile) |
+| Audio | Audio buffer size |
+| Controls | Keyboard on/off, edit keyboard keys |
+| System | Performance overlay, log file, close menu, quit |
 
-## In-game settings (F1 or Esc)
-Same menu as the Poker Smash / ReBirth recomps: display mode (also F11), window size, render resolution, VSync, aspect ratio, texture filtering, audio buffer, keyboard on/off, per-button key rebinding, quit. Saved to `after_burner_climax.toml` next to the exe. F3 = performance overlay. Runs as the full game.
-
-### Default keyboard layout
+### Default keys
 | Action | Controller | Key |
 |---|---|---|
 | Fly (flick left/right = barrel roll) | Left stick | Arrow keys |
@@ -48,23 +52,32 @@ Same menu as the Poker Smash / ReBirth recomps: display mode (also F11), window 
 | X / Y | X / Y | Q / W |
 | Start / Back | Start / Back | Enter / Backspace |
 
-## Layout
-| Path | What |
-|---|---|
-| `after_burner_climax_manifest.toml` | ReXGlue project manifest (codegen input) |
-| `after_burner_climax_overrides.toml` | Missed branch targets + pointer-only functions |
-| `generated/` | Recompiled C++ output of `rexglue codegen` |
-| `src/after_burner_climax_app.h` | App class - game folder default, Xenos GPU plugin, full-game license, first-launch defaults, menu/F11 binds |
-| `src/game_menu.*`, `src/game_keys.h` | F1/Esc settings menu and this game's key layout |
-| `tools/` | Package/XEX extraction (STFS, XEX2 basic + LZX), pointer-function scan, label check |
-| `.github/workflows/build-windows.yml` | CI: LLVM + prebuilt SDK (darkuni/rexglue-sdk-builds, v0.9.0-p23) + game; uploads the package, attaches it to releases |
+F1 / Esc: settings. F11: fullscreen.
 
-## Codegen fixes so far
-- `0x824A7C68`, `0x824D9DD8`, `0x82441BA8`, `0x824D92B0`: small thunks reached only by `b` from other functions.
-- 58 functions reachable only through vtables/callbacks (`tools/scan_pointer_funcs.py`).
+## Building
+GitHub Actions builds on every push to `main` or `nativex` (`.github/workflows/build-windows.yml`, about 10 minutes):
+the ReXGlue SDK from source at v0.10.1 with `patches/rexglue-sdk` and `patches/ffmpeg`, NativeXRenderer (submodule)
+with `patches/native_x_renderer`, then the game with clang and Ninja. See [docs/architecture.md](docs/architecture.md)
+for how the pieces fit, and [docs/development-log.md](docs/development-log.md) for the history.
+
+## Documentation
+| File | What |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | How the port works: start-up, every source file and its functions, settings, CI |
+| [docs/native-x-renderer.md](docs/native-x-renderer.md) | The game's Direct3D map for NativeX: hooks, device layout, verification, what is left |
+| [docs/development-log.md](docs/development-log.md) | What was done, why, and the evidence |
+| [docs/HANDOFF.md](docs/HANDOFF.md) | Current state and the next steps |
+
+## Credits
+- [darkuni](https://github.com/darkuni/afterburner-climax-recomp): the original After Burner Climax recompilation
+  this project grew from (codegen set-up, overrides, the first menu and audio fixes).
+- [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) (BSD-3-Clause, portions from [Xenia](https://xenia.jp)).
+- [NativeXRenderer](https://github.com/ElGuslml/NativeXRenderer) by Gustavo (ElGuslml), with DiligentCore.
+- The shader cache, settings menu and performance overlay come from this author's
+  [Mad Riders recomp](https://github.com/Gandalf4212/mad-riders-recomp).
 
 ## Disclaimer
-Unofficial fan project, not affiliated with or endorsed by SEGA or Microsoft. This repository and its releases contain
-no game data (graphics, sound, levels): those come from your own package. `generated/` and the release exe contain code
-machine-translated from the game's executable. The project's own code is under the [MIT License](LICENSE); the ReXGlue
-SDK is BSD-3-Clause (portions derived from Xenia), and its licenses ship in the release zip.
+Unofficial fan project, not affiliated with or endorsed by SEGA or Microsoft. No game data (graphics, sound, levels)
+is in this repository or its builds: it comes from your own package. `generated/` and the exe contain code
+machine-translated from the game's executable. The project's own code is under the [MIT License](LICENSE); the
+licenses of the SDK, NativeXRenderer and their third-party parts ship in the build's `licenses` folder.

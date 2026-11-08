@@ -1,15 +1,20 @@
-# NativeXRenderer in After Burner Climax (mapping in progress)
+# NativeXRenderer in After Burner Climax
 
-[NativeXRenderer](https://github.com/ElGuslml/NativeXRenderer) draws the game's Direct3D calls on the host
-(Vulkan, DiligentCore) instead of emulating the Xenos GPU. Method: NativeX `docs/integrating-a-game.md`; the same
-work for Mad Riders is in mad-riders-recomp `docs/native-x-renderer.md` and `src/native_x_renderer_mad_riders.cpp`.
+[NativeXRenderer](https://github.com/ElGuslml/NativeXRenderer) ("NativeX") draws the game's Direct3D calls on the
+host with Vulkan (DiligentCore) instead of emulating the Xbox 360's Xenos GPU. It is the game's only renderer. The
+SDK's Xenos plugin stays loaded: its command processor is what NativeX observes, and it draws only if NativeX cannot
+start on the GPU (logged as such).
+
+This file is the map between the game's executable and NativeX: which functions are hooked, where the D3D device
+keeps its state, and what is not done yet. The hooks and the profile are in `src/native_x_renderer_abc.cpp`. NativeX
+itself is the submodule `thirdparty/native_x_renderer` (upstream `bf965e9`) plus `patches/native_x_renderer/`.
 
 ## The executable
 World release, default.xex 0.0.1.2. **XDK 2.0.9328** (import table, library version `0x20247000`).
 The D3D library is linked in at about `0x82230000`-`0x82262000`. Tools: NativeX `tools/ppc_index.py build`,
 `pm4_consts.py 82000000 82600000`, `fn_summary.py range 82230000 82262000` (outputs in `out/`, not committed).
 
-## Device layout (2026-11-08, from the code; to be confirmed by the observer, F10)
+## Device layout (confirmed by the verifier: render state, fetch, programs, bool/loop constants all match)
 **Up to the register shadow it is XDK 7978's (= Mad Riders' 21076):** read in DrawIndexedVertices' flush
 (`82241320`):
 
@@ -41,34 +46,52 @@ The D3D library is linked in at about `0x82230000`-`0x82262000`. Tools: NativeX 
 | Predication | `+12884`..`+12892` | `82248518`, `8224DB08` |
 | Tiling: saved targets, tile count | `+12900`..`+12920`, `+12924` | BeginTiling candidate `8224DC78` |
 
-## Entry points found so far
-| Entry point | Address | Evidence |
+## Hooked entry points (`src/native_x_renderer_abc.cpp`)
+| Call | Address | Notes |
 |---|---|---|
-| DrawVertices | `82240F30` | flush + DRAW_INDX (auto index), 2 engine sites |
-| DrawIndexedVertices | `82241320` | flush + DRAW_INDX with index data, (prim r4, base r5, start r6, count r7) |
-| (UP draws?) | `82249308`, `822496E0` | same flush; to identify (one engine site each) |
-| Resolve | `8224EC70` | RB_COPY_* shadow `+10776..+10788`, EVENT_WRITE, WAIT_REG_MEM; 8 sites |
-| ClearF path | `8224D7A0` -> body `8224D0F0` | IM_LOAD_IMM, viewport/scissor reads |
-| Swap (frame end) | `82252730` | calls VdSwap (`82501B3C`); engine `82170048`/`82170368`, library Present `8225D718` |
-| KickSegment (candidate) | `822544B8` | 112 library callers; write-back/fence reads |
-| Segment fence | `82253E40` | EVENT_WRITE_SHD, writes `+10908` |
-| BeginTiling / EndTiling (candidates) | `8224DC78` / `82248DB0` | save targets, tile count / restore + WAIT_REG_MEM |
-| SetRenderTarget, SetDepthStencilSurface, SetStreamSource, SetTexture, SetIndices, SetVertexDeclaration, SetPixelShader, SetVertexShader, SetScissorRect, SetPredication | see the table above | |
+| DrawVertices / DrawIndexedVertices | `82240F30` / `82241320` | flush + DRAW_INDX; (prim r4, base r5, start r6, count r7) |
+| SetRenderTarget, SetDepthStencilSurface | `8223ED20`, `8223F780` | `+12616 + 4i`, `+12632` |
+| Clear, ClearF | `8224D8C8`, `8224D7A0` | ClearF body `8224D0F0` |
+| Resolve | `8224EC70` | RB_COPY_* shadow `+10776..+10788`; 8 sites |
+| SetPredication, SetViewport, SetScissorRect | `82248518`, `8223F300`, `8223EA78` | |
+| SetPixelShader, SetVertexShader, SetVertexDeclaration | `82243438`, `822435F8`, `822437C8` | |
+| SetStreamSource, SetIndices, SetTexture | `8223EB70`, `8223EC90`, `8224C410` | |
+| BeginShaderConstantF4 | `8224A530` | NativeX D130: the engine writes its float constants itself (12 sites) |
+| RunCommandBuffer | `822496E0` | NativeX D130: recorded command buffers (1 engine site) |
+| BeginTiling / EndTiling | `8224DC78` / `82248DB0` | 4x MSAA scene in three 1280x256 tiles; the end's r4 is a pointer (not the XDK argument layout), NativeX only uses it to end the pass |
+| FlushCpuRange, KickSegment | `82255350`, `822544B8` | |
+| Swap (reported as Present) | `82252730` | frame end; written out by hand: the performance overlay counts frames here |
 
-## First verify run (2026-11-08, owner's PC, Xenia renderer, frames 819 and 2400)
-Render state, vertex fetch, texture fetch, shader programs, bool/loop constants: 0 mismatches (layout confirmed).
-Frame 2400: 99 draw calls, 8 fully match (8.1 %). Two causes, both outside what NativeX hooks today:
-- **Game-written float constants.** `8224A530(dev, pixel?, start, vec4Count)` reserves `4*count+5` dwords
-  (`822546E8`), writes a SET_CONSTANT header (`0xC0002D00 | count<<16 | pred +12892`) and returns a pointer the
-  engine then fills (BeginShaderConstantF4-style; no End call, it is inlined). 12 engine sites, e.g.
-  `8216D824`: VS start 108, 8 vec4. The shadow at +1920/+6016 is bypassed, so the tracker's values are stale
-  (VS c72..c75, c0, c16..c24; PS shadow holds non-floats). `8224A5B8` (3 sites in `821673E8`) writes one
-  SET_CONSTANT dword (`0x00040104`). Needs a NativeX call that reads the data at the next tracked call.
-- **Recorded command buffers.** `822496E0(dev, cmdbuf, pred)` = RunCommandBuffer: ANDs the device dirty masks
-  with the buffer's (+24..+56), flushes, then emits INDIRECT_BUFFER (`0xC0013F00`) per segment from the list at
-  cmdbuf+116. 1 engine site (`82166F78`). 576 draw packets came from such buffers. `82243950` (14 sites) emits
-  3 INDIRECT_BUFFERs from device +13992..+15028 (library-owned; to identify).
+## State (2026-11-08)
+- The game is drawn by NativeX from boot to gameplay, full screen with the HUD, at 60 FPS.
+- Verifier (`--native_x_renderer_verify=true`, F10 or `--native_x_renderer_verify_at=N`): **124 of 126 draws** of a
+  stage frame match the GPU state exactly (was 8 of 99 before D130). The last mismatch (constants read before the
+  game finished filling them) is addressed by reading them before the next draw; not re-verified yet.
+- Not done:
+  - Draws **inside recorded command buffers** (`RunCommandBuffer`, ~570 draw packets per frame) are tracked but not
+    drawn by NativeX's renderer. Find what they draw (likely static scenery or effects) before deciding.
+  - SET_CONSTANT packets with bin predication go to `predicated_writes`, which the tracker does not apply.
+  - Not hooked: Begin/EndVertices (inline draws, `+13436/+13440`), buffer Lock/Unlock, TextureUnlock, NewSegment,
+    SetShaderGPRAllocation, occlusion queries (EVENT_WRITE_ZPD at `82298838`, `8232AC70`), the other draw function
+    `82249308`, the resource object layout (assumed XDK 7978's).
+  - No DLSS / FSR 3.1 / frame generation: they need the main 3D view (view hooks or `upscale_resolve_caller`) and
+    the camera's motion. The game steps its logic once per frame, so it stays at 60 FPS.
 
-## Still to find
-VS/PS constant setters proper (no plain function writes `+1920 + 16*start`), viewport setter, Clear, Begin/EndVertices, buffer Lock/Unlock,
-TextureUnlock, FlushCpuRange, NewSegment, SetShaderGPRAllocation, queries, the resource object layout.
+## Shader cache
+`shaders.cache` next to the exe: one compressed, indexed file (NativeX D127-D129, from Mad Riders). On the first start
+the game's main thread is held while NativeX translates every shader the game ships (`src/shader_scan.cpp`: the 101
+gzip entries of `media\x360\shader_hlsl.farc`, 96 unique: 41 vertex, 55 pixel) and guesses 206 pixel-shader
+translations (about 0.1 s); vertex shader variants (the D3D patches fetches per vertex declaration) and pipelines are
+compiled when first drawn and kept. Draws wait up to 8 ms per frame for those (F1 > Graphics > New shaders).
+
+## NativeX patches (`patches/native_x_renderer/`, applied by CI with `git am`)
+| Patch | What |
+|---|---|
+| 0001 | Scene size and scene antialiasing (Mad Riders) |
+| 0002-0004 | Shader cache: one indexed file, prepared before the game draws; scene wait budget; compressed records, more pipeline threads (D127-D129) |
+| 0005 | Decision numbers of 0002-0004 moved to D127-D129 (upstream uses D115-D117) |
+| 0006 | D130: BeginShaderConstantF4 (constants the game writes after the call) and RunCommandBuffer |
+| 0007 | D131: the tracker's record is not extended across an applied run (crash with the renderer and verifier both on) |
+
+To change NativeX: `git -C thirdparty/native_x_renderer checkout bf965e9 && git am ../../patches/native_x_renderer/*`,
+commit, then `git format-patch bf965e9..HEAD -o ../../patches/native_x_renderer` (replace the old files).

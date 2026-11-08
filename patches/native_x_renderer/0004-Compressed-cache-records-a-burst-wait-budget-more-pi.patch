@@ -1,7 +1,7 @@
 From b85f1e5fbcb8dd1a2eb5d3d46e92f8a306ed2a20 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 7 Nov 2026 14:55:26 -0500
-Subject: [PATCH 4/7] Compressed cache records, a burst wait budget, more
+Subject: [PATCH 4/8] Compressed cache records, a burst wait budget, more
  pipeline threads (D117)
 
 ---

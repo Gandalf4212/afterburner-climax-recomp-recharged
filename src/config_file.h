@@ -49,24 +49,14 @@ struct ConfigSection {
 // Settings that are always written. Missing cvars (NativeX ones in a build
 // without it) are skipped.
 inline const ConfigSection kConfigSections[] = {
-    {"Renderer",
-     {
-         {"recomp_renderer", "\"xenia\" = emulated Xenos GPU (default), \"nativex\" = NativeXRenderer (Vulkan)"},
-     }},
     {"Display",
      {
          {"fullscreen", "true = fullscreen, false = windowed (F11 switches)"},
          {"fullscreen_exclusive", "With fullscreen: true = exclusive (switches the display mode), false = borderless"},
          {"window_width", "Window size in windowed mode (0 = 1280)"},
          {"window_height", ""},
-         {"present_letterbox", "true = keep 16:9 with black bars, false = stretch"},
      }},
-    {"Graphics: Xenia renderer",
-     {
-         {"resolution_scale", "Render scale: 1 (1280x720), 2 or 3"},
-         {"vsync", "true = wait for the monitor refresh"},
-     }},
-    {"Graphics: NativeX renderer",
+    {"Graphics",
      {
          {"native_x_renderer_resolution_scale",
           "Render scale: 0 = fit the screen, 1, 1.5, 2 or 3 (above the screen smooths edges)"},
@@ -75,9 +65,6 @@ inline const ConfigSection kConfigSections[] = {
           "New shaders: ms per frame draws may wait for a first-time compile (0 = pop in, 8, 33)"},
          {"native_x_renderer_present_mode",
           "Screen sync: \"\" = fast, no tearing; \"vsync\"; \"immediate\" (G-Sync/FreeSync)"},
-     }},
-    {"Graphics: both",
-     {
          {"anisotropic_override", "Texture filtering: -1 game default, 0 off, 2 = 2x, 3 = 4x, 4 = 8x, 5 = 16x"},
      }},
     {"Performance",

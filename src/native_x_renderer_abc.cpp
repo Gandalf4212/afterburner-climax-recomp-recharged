@@ -44,10 +44,12 @@ NATIVE_X_RENDERER_HOOK(82248DB0, EndTiling)
 NATIVE_X_RENDERER_HOOK(82255350, FlushCpuRange)         // dcbf loop, 18 library callers
 NATIVE_X_RENDERER_HOOK(822544B8, KickSegment)           // 112 library callers; write-back +10896, fence +10908
 // Frame end: Swap calls VdSwap (82501B3C); the engine calls it (82170048, 82170368), and the library's Present.
-// Written out by hand: the performance overlay counts frames here (perf_on_frame).
+// Written out by hand: the game waits here while the F1 menu pauses it, and the performance overlay counts frames.
+#include "game_pause.h"
 #include "perf_overlay.h"
 REX_EXTERN(__imp__sub_82252730);
 REX_HOOK_RAW(sub_82252730) {
+  game_pause::wait_while_paused();
   recomp_ui::perf_on_frame();
   if (!::native_x_renderer::detail::g_hooks_active) [[likely]] {
     __imp__sub_82252730(ctx, base);

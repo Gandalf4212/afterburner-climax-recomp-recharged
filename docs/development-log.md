@@ -147,6 +147,16 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       118 FPS) doubled the gameplay speed, so the game steps its logic once per frame. The guest refresh is forced
       to 60 Hz (frame_rate.cpp) and the timer resolution raised to 1 ms. Above 60 would need render interpolation
       of game states (large) or frame generation (needs DLSS/FSR view + motion vectors mapped): later, if wanted.
+- [x] Session 2 wrap-up (owner: "it's all buttoned up"): NativeX is the only renderer (Renderer row, the
+      `recomp_renderer` cvar, Xenia-only rows and the ABC_NATIVE_X_RENDERER switch removed; the Xenos plugin stays as
+      NativeX's command processor). Aspect row removed (present_letterbox is Xenia's; NativeX keeps 16:9 with bars).
+      Debug info / pdb removed from the build (the crash handler still reports module+offset). Removed one-off tools
+      (check_labels, dis.sh, lzxtool, xex_lzx, xex_unpack) and docs/reference (ported). Docs rewritten: README,
+      architecture.md (new), native-x-renderer.md, HANDOFF.md (launcher plan), packaging README.
+- [x] Pause while the F1 menu is open (owner: the game kept running). Cooperative: the main thread waits at its next
+      frame start in the Swap hook (`game_pause.h`); suspending guest threads from outside was rejected (a thread
+      stopped in a host lock such as the heap's would hang the menu). NativeX D132 (patch 0008): `SetPaused`, the
+      queue's poller re-presents the last frame with the dialogs at up to 60 FPS.
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

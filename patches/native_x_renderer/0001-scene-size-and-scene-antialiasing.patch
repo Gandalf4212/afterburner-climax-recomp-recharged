@@ -1,7 +1,7 @@
 From 6c8d207e6e9dbeee6a5f5e25434fa674c1013ded Mon Sep 17 00:00:00 2001
 From: Gandalf4212 <gandalf4212@gmail.com>
 Date: Sun, 8 Nov 2026 09:54:39 -0500
-Subject: [PATCH 1/7] scene-size-and-scene-antialiasing
+Subject: [PATCH 1/8] scene-size-and-scene-antialiasing
 
 ---
  include/native_x_renderer/native_x_renderer.h | 10 ++++++

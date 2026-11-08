@@ -1,7 +1,7 @@
 From 0ac16a1c0b8928eb4c8a78db5389527fd1404fd7 Mon Sep 17 00:00:00 2001
 From: Gandalf4212 <gandalf4212@gmail.com>
 Date: Sun, 8 Nov 2026 10:55:18 -0500
-Subject: [PATCH 7/7] D131: a record applied locally is not extended by the
+Subject: [PATCH 7/8] D131: a record applied locally is not extended by the
  next value
 
 ---

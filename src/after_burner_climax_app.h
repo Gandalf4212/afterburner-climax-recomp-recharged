@@ -25,12 +25,12 @@
 #include "crash_handler.h"
 #include "exit_watchdog.h"
 #include "frame_rate.h"
+#include "game_pause.h"
 #include "perf_overlay.h"
 #include "game_keys.h"
 #include "game_menu.h"
 #include "package_setup.h"
 
-#ifdef ABC_NATIVE_X_RENDERER
 #include <native_x_renderer/native_x_renderer.h>
 #include <native_x_renderer/shader_cache_screen.h>
 #include <memory>
@@ -39,7 +39,6 @@
 namespace after_burner_climax {
 const native_x_renderer::Profile& NativeXRendererProfile();
 }
-#endif
 
 class AfterBurnerClimaxApp : public rex::ReXApp {
  public:
@@ -121,7 +120,6 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       rex::cvar::SetFlagByName("recomp_defaults_version", "3");
       recomp_ui::save_config(config_path_);
     }
-#ifdef ABC_NATIVE_X_RENDERER
     // Version 4: with NativeX, draws wait up to 8 ms per frame for a shader compiled for the first time
     // (F1 > New shaders; as Mad Riders).
     if (rex::cvar::Query<int32_t>("recomp_defaults_version") < 4) {
@@ -129,20 +127,15 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       rex::cvar::SetFlagByName("recomp_defaults_version", "4");
       if (!config_path_.empty()) recomp_ui::save_config(config_path_);
     }
-#endif
     REXLOG_INFO("Audio buffer: {} frames", rex::cvar::Query<int32_t>("audio_maxqframes"));
   }
 
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
     perf_overlay_ = std::make_unique<recomp_ui::PerfOverlay>(drawer);
-#ifdef ABC_NATIVE_X_RENDERER
-    // The shader cache's status while it is prepared (draws nothing once ready, or with Xenia).
+    // The shader cache's status while it is prepared (draws nothing once ready).
     native_x_renderer::ShaderCacheScreen::Style style;
     style.title = "AFTER BURNER CLIMAX";
     shader_cache_screen_ = std::make_unique<native_x_renderer::ShaderCacheScreen>(drawer, style);
-#else
-    (void)drawer;
-#endif
     rex::ui::RegisterBind("bind_menu", "F1", "Open/close the settings menu",
                           [this] { ToggleMenu(); });
     rex::ui::RegisterBind("bind_menu_alt", "Escape", "Open/close the settings menu",
@@ -159,6 +152,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   // Window X / Alt+F4 / menu Quit all come through here before the SDK's
   // TerminateTitle + _Exit; the watchdog ends the process if that stalls.
   bool OnWindowCloseRequested() override {
+    game_pause::set(false);
     exit_watchdog::arm("window close requested");
     return true;
   }
@@ -167,14 +161,11 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   void OnPostSetup() override {
     // Again: SDL or a driver may have replaced the filter during set-up.
     crash_handler::install(rex::filesystem::GetExecutableFolder());
-#ifdef ABC_NATIVE_X_RENDERER
     SetUpShaderCache();
-    // Always initialized: with native_x_renderer off it only arms what --native_x_renderer_trace / _verify ask for.
     native_x_renderer::Initialize(after_burner_climax::NativeXRendererProfile(),
                                   runtime() ? runtime()->graphics_system() : nullptr, window(),
                                   runtime() ? runtime()->cache_root() : std::filesystem::path());
     REXLOG_INFO("Renderer in use: {}", native_x_renderer::Renders() ? "NativeX" : "Xenia");
-#endif
     auto* input_sys = static_cast<rex::input::InputSystem*>(runtime()->input_system());
     if (input_sys && imgui_drawer()) {
       input_sys->SetActiveCallback([this]() {
@@ -184,7 +175,6 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     }
   }
 
-#ifdef ABC_NATIVE_X_RENDERER
   // With NativeX, the shader cache is prepared before the game's main thread runs at all (held here, resumed
   // when done), so its timers, movies and audio never see the wait; the status screen shows meanwhile.
   void OnPostLaunchModule(rex::system::XThread* thread) override {
@@ -197,27 +187,13 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     shader_cache_screen_.reset();
     perf_overlay_.reset();
   }
-#endif
 
  private:
-  // recomp_renderer (F1 > Renderer): "xenia" = the SDK's Xenos plugin draws
-  // (default); "nativex" = NativeXRenderer draws, the Xenos plugin only runs the
-  // command processor it observes.
   static void ApplyRenderer() {
-    const std::string r = rex::cvar::Query<std::string>("recomp_renderer");
-    if (r != "xenia" && r != "nativex") {
-      REXLOG_WARN("recomp_renderer \"{}\" unknown; using xenia", r);
-    }
-#ifdef ABC_NATIVE_X_RENDERER
-    // NativeX draws; the Xenos plugin's host rendering goes off (it still runs the command processor, and draws
-    // only if NativeXRenderer cannot start: logged). The SDK's shader storage is for the Xenos path.
-    const bool nx = r == "nativex";
-    rex::cvar::SetFlagByName("native_x_renderer", nx ? "true" : "false");
-    if (nx) rex::cvar::SetFlagByName("store_shaders", "false");
-    REXLOG_INFO("Renderer selected: {}", nx ? "NativeX (Vulkan)" : "Xenia (Xenos plugin)");
-#else
-    REXLOG_INFO("Renderer: Xenia (Xenos plugin)");
-#endif
+    // NativeXRenderer draws. The SDK's Xenos plugin still runs the command processor NativeX observes, and draws
+    // only if NativeX cannot start on this GPU (logged); its shader storage is for its own drawing: off.
+    rex::cvar::SetFlagByName("native_x_renderer", "true");
+    rex::cvar::SetFlagByName("store_shaders", "false");
   }
 
   // recomp_log (off by default; F1 menu, after_burner_climax.toml, --recomp_log=true).
@@ -242,6 +218,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       delete menu_;                    // removes itself from the drawer
       menu_ = nullptr;
       BlockGameInput(false);
+      game_pause::set(false);
       return;
     }
     if (!imgui_drawer()) return;
@@ -267,14 +244,17 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       return uint16_t(state.gamepad.buttons);
     };
     host.quit = [this] {
+      game_pause::set(false);  // the game's thread must not be held while the title terminates
       exit_watchdog::arm("menu Quit");
       app_context().CallInUIThreadDeferred([this] { window()->RequestClose(); });
     };
     host.on_closed = [this] {
       menu_ = nullptr;
       BlockGameInput(false);
+      game_pause::set(false);
     };
     BlockGameInput(true);
+    game_pause::set(true);
     menu_ = new recomp_ui::GameMenu(imgui_drawer(), std::move(host));
   }
 
@@ -296,7 +276,6 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
 
   std::filesystem::path config_path_;
   std::filesystem::path game_data_root_;
-#ifdef ABC_NATIVE_X_RENDERER
   std::unique_ptr<native_x_renderer::ShaderCacheScreen> shader_cache_screen_;
 
   // NativeX's shader cache: shaders.cache next to the exe, one compressed indexed file (NativeX D127, D129). Its
@@ -314,6 +293,5 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     };
     native_x_renderer::SetShaderCache(std::move(source));
   }
-#endif
   recomp_ui::GameMenu* menu_ = nullptr;  // owned by the ImGui drawer
 };

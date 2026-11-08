@@ -1,0 +1,134 @@
+From 3ff5c65eb823ae2925dc6f77dc2de13e807fe9e2 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Sun, 8 Nov 2026 12:10:34 -0500
+Subject: [PATCH 8/8] D132: a paused game's last frame is shown again
+ (SetPaused)
+
+---
+ docs/decisions.md                             |  9 ++++++
+ include/native_x_renderer/native_x_renderer.h |  4 +++
+ src/native_x_renderer.cpp                     |  4 +++
+ src/renderer.cpp                              | 32 +++++++++++++++++--
+ src/renderer.h                                |  1 +
+ 5 files changed, 48 insertions(+), 2 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index f07ebe4..411faf3 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4427,3 +4427,12 @@ starts a new kValues run instead of joining the last one.
+ grew that run's count, and the next ApplyRecord began at `applied_to_`, inside the run: it read a value as a run
+ header and copied past the record's end (After Burner Climax, NativeX with --native_x_renderer_verify: access
+ violation in memcpy under StateTracker::Gather).
++
++## D132 — A paused game's last frame is shown again (2026-11-08, After Burner Climax)
++
++**What:** `native_x_renderer::SetPaused(bool)`. While paused, the command queue's poller (the renderer's thread, every
++few milliseconds without a command) presents the last Present command's front buffer again with the ImGui dialogs over
++it, at up to 60 frames per second. The poller now always runs (it also serves the guest's swaps, D86).
++
++**Why:** After Burner Climax pauses the game while its settings menu is open by holding the game's threads; the
++dialogs are drawn over the game's frames (D75), so without new frames the menu would not be drawn.
+diff --git a/include/native_x_renderer/native_x_renderer.h b/include/native_x_renderer/native_x_renderer.h
+index 2d32aa6..5041279 100644
+--- a/include/native_x_renderer/native_x_renderer.h
++++ b/include/native_x_renderer/native_x_renderer.h
+@@ -282,6 +282,10 @@ double AspectFactor();
+ // stretched with the 3D view. Set by the game's hooks around its 2D views; off again at every Present.
+ void SetGameAspectBox(bool on);
+ 
++// The game is paused (its threads held by the app, e.g. while a settings menu is open), D132: the renderer keeps
++// showing its last frame with the ImGui dialogs over it, at up to 60 frames per second, until unpaused.
++void SetPaused(bool paused);
++
+ // The game starts drawing a view: a camera's image (its 3D scene, a reflection, a shadow map, a 2D layer).
+ // `scene_view_projection`: for a view of the 3D world, its view-projection matrix (16 floats, rows, as the
+ // game gives them to its shaders, for a row vector); null for any other view. With DLAA
+diff --git a/src/native_x_renderer.cpp b/src/native_x_renderer.cpp
+index d68631a..e20c433 100644
+--- a/src/native_x_renderer.cpp
++++ b/src/native_x_renderer.cpp
+@@ -133,6 +133,10 @@ void SetGameAspectBox(bool on) {
+   if (g_renderer) renderer::SetGameAspectBox(on);
+ }
+ 
++void SetPaused(bool paused) {
++  if (g_renderer) renderer::SetPaused(paused);
++}
++
+ void BeginView(const float* scene_view_projection) {
+   if (g_renderer) renderer::BeginView(scene_view_projection);
+ }
+diff --git a/src/renderer.cpp b/src/renderer.cpp
+index 51ad23d..912150d 100644
+--- a/src/renderer.cpp
++++ b/src/renderer.cpp
+@@ -1426,7 +1426,29 @@ void PresentPending(bool room = false) {
+   }
+ }
+ 
++// D132: the game paused (its threads held): the last frame is shown again with the dialogs, from the renderer's
++// thread when no command comes (the queue's poller), at up to 60 frames per second.
++std::atomic<bool> g_paused{false};
++Command g_last_present;
++bool g_have_last_present = false;
++
++void PresentWhilePaused() {
++  if (!g_paused.load(std::memory_order_relaxed) || !g_have_last_present || !g_device) return;
++  static std::chrono::steady_clock::time_point last{};
++  const auto now = std::chrono::steady_clock::now();
++  if (now - last < std::chrono::milliseconds(16)) return;
++  last = now;
++  if (!g_device->UpdateSize()) return;
++  const auto& desc = g_device->swap_chain()->GetDesc();
++  ITextureView* target = g_device->swap_chain()->GetCurrentBackBufferRTV();
++  PresentFrontBuffer(g_last_present, target);
++  g_overlay.Present(g_device->context(), target, desc.Width, desc.Height, g_window);
++  FinishPresent();
++}
++
+ void ExecutePresent(const Command& c) {
++  g_last_present = c;
++  g_have_last_present = true;
+   bool with_swap = g_present_with_swaps && c.swap_tag;
+   if (with_swap) PresentPending(true);  // room for this frame
+   RendererTime time;
+@@ -1892,8 +1914,12 @@ bool Initialize(const Profile& profile, rex::system::IGraphicsSystem* graphics,
+       g_swaps_executed.store(executed, std::memory_order_relaxed);
+     }
+   }
+-  CommandQueue::Poller poller = nullptr;
+-  if (g_present_with_swaps) poller = [] { PresentPending(); };
++  // The poller runs on the renderer's thread every few ms while no command comes: the guest's swaps (D86), and the
++  // last frame shown again while the game is paused (D132).
++  CommandQueue::Poller poller = [] {
++    if (g_present_with_swaps) PresentPending();
++    PresentWhilePaused();
++  };
+   g_queue.Start(threaded, &Execute, poller);
+   if (threaded) {
+     graphics->SetSignalGate([](void*) { g_queue.WaitIdle(); }, nullptr);
+@@ -1996,6 +2022,8 @@ void PrepareShaderCacheBeforeLaunch(std::function<void()> done) {
+ 
+ double AspectFactor() { return g_aspect_factor; }
+ 
++void SetPaused(bool paused) { g_paused.store(paused, std::memory_order_relaxed); }
++
+ void SetGameAspectBox(bool on) {
+   Capture capture(Command::Type::kAspectBox);
+   capture.command.on = on;
+diff --git a/src/renderer.h b/src/renderer.h
+index 509969d..d9d7aa1 100644
+--- a/src/renderer.h
++++ b/src/renderer.h
+@@ -35,6 +35,7 @@ void PrepareShaderCacheBeforeLaunch(std::function<void()> done);
+ // See native_x_renderer::AspectFactor and native_x_renderer::SetGameAspectBox.
+ double AspectFactor();
+ void SetGameAspectBox(bool on);
++void SetPaused(bool paused);  // native_x_renderer::SetPaused (D132)
+ // See native_x_renderer::BeginView and native_x_renderer::EndViewGeometry.
+ void BeginView(const float* scene_view_projection);
+ void EndViewGeometry();
+-- 
+2.43.0
+

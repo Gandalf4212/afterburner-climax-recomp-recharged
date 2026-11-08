@@ -1,59 +1,41 @@
-# Handoff (2026-11-08, session 2)
+# Handoff (2026-11-08, end of session 2)
 
-State of branch `nativex`, and what to do next. Update this file at the end of each session.
+## State
+Branch `nativex`. The game runs natively with **NativeXRenderer as its only renderer**: boot to gameplay, full screen
+with the HUD, 60 FPS, no crash in the owner's tests. Shader cache, F1 menu (blue theme, five categories, controller),
+pause while the menu is open, performance overlay, exit watchdog and crash report are in. Details:
+[architecture.md](architecture.md), [native-x-renderer.md](native-x-renderer.md), [development-log.md](development-log.md).
 
-## Done
-| Commit | What |
-|---|---|
-| 07102ea | ReXGlue v0.10.1 from source (was v0.9.0-p23 prebuilt); World release only (Original 1.0.0.0 exe and `world/` removed); code regenerated (0 errors, the same 24 unresolved-branch traps as before); XMA start/end skip ported (SDK patch 0010 + FFmpeg patch); SDK glue-name fix (0011); exit watchdog; CI. **CI passed (9.5 min).** |
-| 1940c8f | F1 menu: Mad Riders layout + Afterburner's flight keys/rebinding page; Renderer row (`recomp_renderer`: xenia default / nativex); render res & VSync follow the renderer; AA / New shaders rows (NativeX only); Log file row; `config_file.h` writes all settings under the ASCII banner. |
-| 099e5c7 | `docs/native-x-renderer.md`: D3D map of XDK 9328. |
-| 9f958c5 | NativeXRenderer submodule (bf965e9) built in; `src/native_x_renderer_abc.cpp` hooks + profile. CI passed (11 min). Owner tested: Xenia boots, audio good, quit clean; verify works (F10 and `--native_x_renderer_verify_at`). |
-| 08bc29d | First verify report read (docs/native-x-renderer.md): layout right, 8.1 % of draws fully match. |
-| (session 2) | NativeX patches `patches/native_x_renderer/0001-0006`, applied by CI on bf965e9: Mad Riders' scene size, shader cache, scene wait budget, compressed records (renumbered D127-D129: upstream used D115-D117), and D130: `BeginShaderConstantF4` (`8224A530`, game-written constants) + `RunCommandBuffer` (`822496E0`) tracked. Shader cache wired in (`src/shader_scan.*`: FArC `media\x360\shader_hlsl.farc`, 96 unique shaders; `shaders.cache` next to the exe; game thread held while it is prepared; New shaders default 8 ms). Name shown: "After Burner Climax Recomp (Recharged)". |
+Waiting on the owner: a test of the newest build (menu pause, NativeX after the Xenia selector was removed).
 
-## Key files
-- `src/after_burner_climax_app.h`: app hooks (paths, xex check, renderer switch `ApplyRenderer`, log switch, NativeX `Initialize`, menu, exit watchdog arming).
-- `src/game_menu.cpp/.h`, `src/game_keys.h`, `src/config_file.h`: F1 menu, key layout, config writer.
-- `src/exit_watchdog.h`: forced exit 3 s after a close request (see why in the file / log).
-- `src/native_x_renderer_abc.cpp`: NativeX entry points and `DeviceLayout`/`ObjectLayout`.
-- `CMakeLists.txt`: `ABC_SKIP_CODEGEN` (builds from committed code when assets/default.xex is absent), needs `REXSDK_DIR`.
-- `.github/workflows/build-windows.yml`: artifact `after_burner_climax-win-amd64`.
+## Known gaps (NativeX)
+- Draws inside recorded command buffers (RunCommandBuffer, ~570 draw packets a frame) are tracked, not drawn. The
+  game looked complete in the owner's screenshots, so find out what they are before working on it.
+- Predicated SET_CONSTANT packets are not applied by the tracker; the last verify mismatch is fixed but not re-verified.
+- No DLSS / FSR 3.1 / frame generation (needs the 3D view and motion mapped). The game steps its logic once per
+  frame: above 60 FPS would need render interpolation of game states.
 
-## Waiting on the owner (tests on Windows)
-0. New build: `--recomp_log=true --native_x_renderer_verify=true --native_x_renderer_verify_at=2400`, fly a
-   stage: the report should show far fewer VS/PS constant mismatches. Then F1 > Renderer = NativeX: first start
-   shows the shader cache screen ("Finding the game's shaders", 96), later starts only load. Log lines "Shader scan".
-(Done in session 2:)
-1. Xenia path (default): boots, plays, audio OK (XMA skip port: listen for clicks on looping sounds), quitting
-   ends the process. Log: "Exit watchdog armed", then "Title terminated; hard-exiting process." or
-   "Exit watchdog: shutdown did not finish" (tells which stage stalls).
-2. F1 > Log file On, restart with `--native_x_renderer_verify=true`, fly into a stage, press F10; send the log
-   (report ~10 frames later). Optional: `--native_x_renderer_trace=true` + F9 dumps a frame.
-3. Optional: F1 > Renderer = NativeX, restart: what draws.
+## Next: the launcher (owner's plan, starting 2026-11-09)
+Turn the repository into one that holds **no recompiled game code**: a launcher that builds the game on the user's PC
+from their own package, like
+[mushihimesama-futari-black-label-recomp v0.8.0](https://github.com/Gandalf4212/mushihimesama-futari-black-label-recomp/releases/tag/v0.8.0)
+(its release: the game zip with a trimmed w64devkit compiler; `toolchain-sources-<ver>.zip` with that compiler's GCC,
+binutils and Mingw-w64 sources under GPLv3; a launcher exe that checks the CRCs, builds once into `assets\`, then starts
+the game; `assets\build.log` on failure).
 
-## Next steps
-0. Verify again with D130. Still open from the report: draws inside recorded command buffers (RunCommandBuffer) are
-   tracked but not drawn by the NativeX renderer; PS shadow at +6016 held non-floats (check after D130).
-   Shader cache: vertex shader variants (the D3D patches fetches per vertex declaration) and pipelines are only
-   compiled when first drawn, then cached; the owner wants everything compiled on the first start: needs the
-   game's vertex declarations to patch the shipped vertex shaders ahead (NativeX docs/shader-cache.md, section 6).
-1. (Earlier) Read the verify report: fix wrong offsets in the profile, add what it says is missing. Not mapped yet: VS/PS
-   constant setters (no plain function writes `+1920 + 16*start`; likely inlined in the engine: scan for
-   `ld/or/std` on device `+0`/`+8`), Begin/EndVertices (draws touch `+13436/+13440`), buffer Lock/Unlock,
-   TextureUnlock, NewSegment, SetShaderGPRAllocation, occlusion queries (EVENT_WRITE_ZPD in engine code
-   `82298838`, `8232AC70`), the two other draw functions `82249308`/`822496E0` (UP draws?), resource object
-   layout (assumed 7978's). Candidates to confirm: SetViewport `8223F300`, BeginTiling `8224DC78`,
-   EndTiling `82248DB0`. Method: NativeX `docs/integrating-a-game.md`; Mad Riders' table (`docs/reference/mad-riders/native-x-renderer.md`) is a good model.
-2. When NativeX draws correctly: make it the default renderer.
-3. (Done in session 2, see above.) Shader cache (was `patches/native_x_renderer-pending/0001-0004`, models in `docs/reference/mad-riders/`): tested against
-   bf965e9, none apply as-is. 0001 (scene size/AA) overlaps upstream D126 (merge by hand); 0002 (cache core,
-   ~2500 lines) only 1 code hunk + docs; 0003/0004 after those. Rebase on a test branch: apply on 5aa5a05,
-   `git rebase bf965e9`. A shader scanner for this game's data format must be written (Mad Riders' reads
-   `.rpack`). Check that frame generation / DLSS (upstream D116-D124) don't conflict with pre-launch preparation.
-4. Rewrite README.md and all docs for this build (credit darkuni's original work); README still describes the
-   old two-exe build.
-5. Before major features: check rexglue/rexglue-sdk tags (`git ls-remote`) and NativeXRenderer main.
-6. Roadmap (last): launcher that finds/asks for the package (file dialog), shows an attractive import screen with
-   progress, extracts assets, runs codegen and builds the game locally so the repo holds no game-derived code;
-   on update, recompile against an existing assets folder when no package is present.
+1. **Launcher exe** with a selection screen in the menu's style (blue panel, controller and keyboard): if no package
+   is next to it, ask for the Xbox 360 file (file dialog); verify it with **CRC32** as
+   "After Burner Climax XBLA (World)" (compute and record the package's CRC32, and default.xex's: SHA-1
+   `a066b2d6...`, 2,293,760 bytes); extract it (`package_setup.cpp`); show progress.
+2. **Local build**: run `rexglue codegen` on the user's default.xex with the manifest and overrides, then compile and
+   link the game against prebuilt SDK and NativeX libraries. Measure time, RAM and disk, and write `assets\build.log`.
+3. **Minimal build environment in the package**: a compiler that can build `generated/` and link with the SDK
+   (decide: the w64devkit GCC route as in Futari, or clang + lld with the MSVC-compatible runtime the SDK is built
+   for; the SDK is built with clang for MSVC today, so mixing compilers needs checking first). Prebuilt SDK, NativeX
+   and FFmpeg libraries and headers.
+4. **Toolchain sources combined into one file** (`toolchain-sources-<ver>.zip`) attached to each release, for the
+   compiler's licenses.
+5. CI: build the launcher and the prebuilt libraries, package the release; remove `generated/` from the repo.
+6. Then: README and docs for the launcher.
+
+Before starting: check `rexglue/rexglue-sdk` tags and NativeXRenderer main for updates (`git ls-remote`).

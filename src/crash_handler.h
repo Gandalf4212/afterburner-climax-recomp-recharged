@@ -1,6 +1,6 @@
 // Crash report: on an unhandled exception (Windows), writes the exception, the faulting module and offset, and the
-// faulting thread's stack (module+offset, and the function and line where the shipped .pdb knows them: our code and
-// NativeXRenderer are built with debug info) to the log and to crash.txt next to the exe. The SDK's own access
+// faulting thread's stack (module+offset; function and line too when a .pdb is next to the exe, e.g. a local debug
+// build) to the log and to crash.txt next to the exe. The SDK's own access
 // violation handling (guest memory, write watches) runs first through vectored handlers; only what nobody handled
 // arrives here.
 #pragma once
