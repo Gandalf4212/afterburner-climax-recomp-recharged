@@ -78,6 +78,8 @@ enum MainRow {
   kScreenSync,
   kAspect,
   kFiltering,
+  kFrameRate,
+  kPerfOverlay,
   kAudioBuffer,
   kKeyboard,
   kLogFile,
@@ -165,6 +167,10 @@ int SyncIndex() {
   return 0;
 }
 
+const int kFrameRates[] = {60, 120};
+const char* const kFrameRateLabels[] = {"60 FPS (original)", "120 FPS (experimental)"};
+const char* const kPerfLabels[] = {"Off", "FPS", "FPS, CPU, GPU", "FPS, CPU, GPU, frame times"};
+
 constexpr const char* kNativeXOnly = "(NativeX only)";
 
 const char* MainLabel(int row) {
@@ -178,6 +184,8 @@ const char* MainLabel(int row) {
     case kScreenSync: return NativeX() ? "Screen sync" : "VSync";
     case kAspect: return "Aspect ratio";
     case kFiltering: return "Texture filtering";
+    case kFrameRate: return "Frame rate";
+    case kPerfOverlay: return "Performance overlay";
     case kAudioBuffer: return "Audio buffer";
     case kKeyboard: return "Keyboard controls";
     case kLogFile: return "Log file";
@@ -207,6 +215,8 @@ const char* MainNote(int row) {
                        : "Wait for the monitor refresh. Off can tear.";
     case kAspect: return "Keep 16:9 adds black bars on other window shapes.";
     case kFiltering: return "Sharper textures seen at an angle.";
+    case kFrameRate: return "120 is experimental: if the game speeds up, go back to 60. Next launch.";
+    case kPerfOverlay: return "Frame rate, CPU and GPU use, and a frame-time graph in the top-right corner.";
     case kAudioBuffer: return "Bigger fixes crackles and dropouts, smaller has less delay. Next launch.";
     case kKeyboard: return "Play with the keyboard as controller 1.";
     case kLogFile: return "Writes logs\\after_burner_climax_NNN.log for bug reports. Next launch.";
@@ -257,6 +267,8 @@ std::string MainValue(int row) {
       return GetBool("vsync") ? "On" : "Off";
     case kAspect: return GetBool("present_letterbox") ? "Keep 16:9" : "Stretch to window";
     case kFiltering: return kAnisoLabels[AnisoIndex()];
+    case kFrameRate: return kFrameRateLabels[GetInt("recomp_frame_rate") == 120 ? 1 : 0];
+    case kPerfOverlay: return kPerfLabels[std::clamp(GetInt("recomp_perf_overlay"), 0, 3)];
     case kAudioBuffer: return kAudioLabels[AudioIndex()];
     case kKeyboard: return GetBool("mnk_mode") ? "On" : "Off";
     case kLogFile: return GetBool("recomp_log") ? "On" : "Off";
@@ -331,15 +343,15 @@ struct Tab {
 };
 const std::vector<Tab>& Tabs() {
   static const std::vector<Tab> tabs = {
-      {"DISPLAY", {kDisplayMode, kWindowSize, kRenderRes, kAspect, kScreenSync}},
+      {"DISPLAY", {kDisplayMode, kWindowSize, kRenderRes, kAspect, kScreenSync, kFrameRate}},
       {"GRAPHICS", {kRenderer, kAntiAlias, kFiltering, kCompileWait}},
       {"AUDIO", {kAudioBuffer}},
       {"CONTROLS", {kKeyboard, kEditKeys}},
-      {"SYSTEM", {kLogFile, kCloseMenu, kQuit}},
+      {"SYSTEM", {kPerfOverlay, kLogFile, kCloseMenu, kQuit}},
   };
   return tabs;
 }
-constexpr int kMaxTabRows = 5;
+constexpr int kMaxTabRows = 6;
 
 // ------------------------------------------------------------------ gamepad (controller 1)
 constexpr uint16_t kPadUp = 0x0001, kPadDown = 0x0002, kPadLeft = 0x0004, kPadRight = 0x0008;
@@ -524,6 +536,11 @@ void GameMenu::Change(int row, int dir) {
       break;
     }
     case kKeyboard: SetBool("mnk_mode", !GetBool("mnk_mode")); break;
+    case kFrameRate:
+      SetInt("recomp_frame_rate", GetInt("recomp_frame_rate") == 120 ? 60 : 120);
+      status_ = "Frame rate changes on the next launch.";
+      break;
+    case kPerfOverlay: SetInt("recomp_perf_overlay", (std::clamp(GetInt("recomp_perf_overlay"), 0, 3) + dir + 4) % 4); break;
     case kLogFile:
       SetBool("recomp_log", !GetBool("recomp_log"));
       status_ = "Logging changes on the next launch.";

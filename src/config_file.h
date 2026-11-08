@@ -80,6 +80,11 @@ inline const ConfigSection kConfigSections[] = {
      {
          {"anisotropic_override", "Texture filtering: -1 game default, 0 off, 2 = 2x, 3 = 4x, 4 = 8x, 5 = 16x"},
      }},
+    {"Performance",
+     {
+         {"recomp_frame_rate", "Frame rate: 60 (original) or 120 (experimental), next launch"},
+         {"recomp_perf_overlay", "Overlay: 0 off, 1 FPS, 2 FPS + CPU/GPU, 3 + frame-time graph"},
+     }},
     {"Audio",
      {
          {"audio_maxqframes", "Audio buffer frames: 8, 16, 32 or 64 (bigger fixes crackling)"},

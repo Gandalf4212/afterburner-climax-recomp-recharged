@@ -44,7 +44,19 @@ NATIVE_X_RENDERER_HOOK(82248DB0, EndTiling)
 NATIVE_X_RENDERER_HOOK(82255350, FlushCpuRange)         // dcbf loop, 18 library callers
 NATIVE_X_RENDERER_HOOK(822544B8, KickSegment)           // 112 library callers; write-back +10896, fence +10908
 // Frame end: Swap calls VdSwap (82501B3C); the engine calls it (82170048, 82170368), and the library's Present.
-NATIVE_X_RENDERER_HOOK(82252730, Present)
+// Written out by hand: the performance overlay counts frames here (perf_on_frame).
+#include "perf_overlay.h"
+REX_EXTERN(__imp__sub_82252730);
+REX_HOOK_RAW(sub_82252730) {
+  recomp_ui::perf_on_frame();
+  if (!::native_x_renderer::detail::g_hooks_active) [[likely]] {
+    __imp__sub_82252730(ctx, base);
+    return;
+  }
+  ::native_x_renderer::detail::Enter(::native_x_renderer::Call::kPresent, ctx, base);
+  __imp__sub_82252730(ctx, base);
+  ::native_x_renderer::detail::Leave(::native_x_renderer::Call::kPresent, ctx, base);
+}
 
 namespace after_burner_climax {
 

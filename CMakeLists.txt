@@ -56,6 +56,8 @@ set(ABC_SOURCES
     src/main.cpp
     src/game_menu.cpp
     src/package_setup.cpp
+    src/perf_overlay.cpp
+    src/frame_rate.cpp
 )
 
 if(WIN32)
@@ -82,7 +84,7 @@ native_x_renderer_copy_runtime(after_burner_climax)
 # Debug info (CodeView, shipped as after_burner_climax.pdb) for our code and NativeXRenderer only, so a crash report
 # (src/crash_handler.h) names functions and lines; the generated game code stays without it (size, link time).
 if(WIN32)
-    set_source_files_properties(src/main.cpp src/game_menu.cpp src/package_setup.cpp src/native_x_renderer_abc.cpp
+    set_source_files_properties(src/main.cpp src/game_menu.cpp src/package_setup.cpp src/native_x_renderer_abc.cpp src/perf_overlay.cpp src/frame_rate.cpp
         src/shader_scan.cpp PROPERTIES COMPILE_OPTIONS "-g;-gcodeview")
     foreach(_nxr_target native_x_renderer native_x_renderer_sdk)
         if(TARGET ${_nxr_target})

@@ -141,6 +141,10 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       PageUp/Down) category, B/Backspace close.
 - [ ] Open: SET_CONSTANT packets with bin predication (BeginShaderConstantF4 ORs in +12892) go to
       `predicated_writes`, which Gather does not apply; check if the game writes constants inside a tiled pass.
+- [x] Performance overlay (from mad-riders-recomp, perf_overlay.*): F1 > System, Off / FPS / FPS CPU GPU /
+      + frame-time graph (cvar recomp_perf_overlay 0-3), blue style; frames counted in the Swap hook 82252730
+      (written out by hand). Frame rate (frame_rate.*): F1 > Display, 60 (original) / 120 (experimental), sets
+      video_mode_refresh_rate (the game presents once per guest vblank); also timeBeginPeriod(1).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

@@ -24,6 +24,8 @@
 #include "config_file.h"
 #include "crash_handler.h"
 #include "exit_watchdog.h"
+#include "frame_rate.h"
+#include "perf_overlay.h"
 #include "game_keys.h"
 #include "game_menu.h"
 #include "package_setup.h"
@@ -79,6 +81,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     REXLOG_INFO("After Burner Climax Recomp (Recharged), build {}", ABC_BUILD);
 #endif
     ApplyRenderer();
+    frame_rate::apply();
     // GPU emulation is opt-in in ReXGlue (gpu_plugin cvar). Default to the
     // Xenos plugin so the game actually renders; --gpu_plugin still overrides.
     if (config.gpu_plugin.empty()) {
@@ -131,6 +134,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   }
 
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+    perf_overlay_ = std::make_unique<recomp_ui::PerfOverlay>(drawer);
 #ifdef ABC_NATIVE_X_RENDERER
     // The shader cache's status while it is prepared (draws nothing once ready, or with Xenia).
     native_x_renderer::ShaderCacheScreen::Style style;
@@ -189,7 +193,10 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     native_x_renderer::PrepareShaderCacheBeforeLaunch([thread] { thread->Resume(); });
   }
 
-  void OnShutdown() override { shader_cache_screen_.reset(); }
+  void OnShutdown() override {
+    shader_cache_screen_.reset();
+    perf_overlay_.reset();
+  }
 #endif
 
  private:
@@ -285,6 +292,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     }
   }
   bool input_blocked_ = false;
+  std::unique_ptr<recomp_ui::PerfOverlay> perf_overlay_;
 
   std::filesystem::path config_path_;
   std::filesystem::path game_data_root_;
