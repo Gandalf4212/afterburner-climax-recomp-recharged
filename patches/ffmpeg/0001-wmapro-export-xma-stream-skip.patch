@@ -1,0 +1,40 @@
+diff --git a/libavcodec/wmaprodec.c b/libavcodec/wmaprodec.c
+index 704c0a400a..019620d410 100644
+--- a/libavcodec/wmaprodec.c
++++ b/libavcodec/wmaprodec.c
+@@ -88,6 +88,7 @@
+ 
+ #include <inttypes.h>
+ 
++#include "libavutil/dict.h"
+ #include "libavutil/ffmath.h"
+ #include "libavutil/float_dsp.h"
+ #include "libavutil/intfloat.h"
+@@ -1460,21 +1461,24 @@ static int decode_frame(WMAProDecodeCtx *s, AVFrame *frame, int *got_frame_ptr)
+         ff_dlog(s->avctx, "drc_gain %i\n", s->drc_gain);
+     }
+ 
+-    /** no idea what these are for, might be the number of samples
+-        that need to be skipped at the beginning or end of a stream */
++    /** Number of samples to drop at the start / end of the stream (encoder
++        delay and end padding). XMA hardware honours these; export them as
++        frame metadata ("xma_start_skip" / "xma_end_skip") so the caller can. */
+     if (get_bits1(gb)) {
+-        int av_unused skip;
++        int skip;
+ 
+         /** usually true for the first frame */
+         if (get_bits1(gb)) {
+             skip = get_bits(gb, av_log2(s->samples_per_frame * 2));
+             ff_dlog(s->avctx, "start skip: %i\n", skip);
++            av_dict_set_int(&frame->metadata, "xma_start_skip", skip, 0);
+         }
+ 
+         /** sometimes true for the last frame */
+         if (get_bits1(gb)) {
+             skip = get_bits(gb, av_log2(s->samples_per_frame * 2));
+             ff_dlog(s->avctx, "end skip: %i\n", skip);
++            av_dict_set_int(&frame->metadata, "xma_end_skip", skip, 0);
+         }
+ 
+     }

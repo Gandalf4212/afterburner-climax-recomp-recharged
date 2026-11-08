@@ -1,0 +1,106 @@
+From 0f970f08295d5e146d698dfc5990c11b14919063 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Sun, 8 Nov 2026 08:58:22 -0500
+Subject: [PATCH 10/11] audio: honour XMA stream start/end skip from the frame
+ header
+
+Ported from darkuni/rexglue-sdk-builds 0001 (written for v0.9.0) onto
+v0.10.1's realigned decoder output. The skips (encoder delay, end padding)
+are applied in whole 128-sample subframes through the existing pending
+start-skip / output-limit values. Needs the FFmpeg wmaprodec patch that
+exports xma_start_skip / xma_end_skip as frame metadata.
+cvar: xma_honor_stream_skip (default true).
+---
+ src/audio/xma_context.cpp | 43 +++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 41 insertions(+), 2 deletions(-)
+
+diff --git a/src/audio/xma_context.cpp b/src/audio/xma_context.cpp
+index 11b83be..8f9a57c 100644
+--- a/src/audio/xma_context.cpp
++++ b/src/audio/xma_context.cpp
+@@ -10,11 +10,13 @@
+ */
+ 
+ #include <algorithm>
++#include <cstdlib>
+ #include <cstring>
+ 
+ #include <rex/audio/xma/context.h>
+ #include <rex/audio/xma/decoder.h>
+ #include <rex/audio/xma/helpers.h>
++#include <rex/cvar.h>
+ #include <rex/dbg.h>
+ #include <rex/logging.h>
+ #include <rex/memory/ring_buffer.h>
+@@ -27,6 +29,7 @@ extern "C" {
+ #pragma warning(disable : 4101 4244 5033)
+ #endif
+ #include "libavcodec/avcodec.h"
++#include "libavutil/dict.h"
+ #include "libavutil/error.h"
+ #if REX_COMPILER_MSVC
+ #pragma warning(pop)
+@@ -36,6 +39,14 @@ extern "C" {
+ // Credits for most of this code goes to:
+ // https://github.com/koolkdev/libertyv/blob/master/libav_wrapper/xma2dec.c
+ 
++// Stream start/end skip (encoder delay / end padding) from each XMA frame's
++// header. The console's XMA hardware drops these samples; FFmpeg only reports
++// them (thirdparty/FFmpeg patch: frame metadata xma_start_skip/xma_end_skip).
++// Ported from darkuni/rexglue-sdk-builds 0001 (v0.9.0) onto v0.10.1's
++// realigned output; applied in whole 128-sample subframes (nearest).
++REXCVAR_DEFINE_BOOL(xma_honor_stream_skip, true, "Audio",
++                    "Drop the encoder-delay / end-padding samples flagged in XMA frame headers, as the hardware does");
++
+ namespace rex::audio {
+ 
+ using stream::BitStream;
+@@ -689,6 +700,32 @@ void XmaContext::Decode(XMA_CONTEXT_DATA* data) {
+                                  : 0;
+     loop_start_skip_pending_ = false;
+ 
++    // Stream skips of the frame just decoded, in subframes (rounded to the
++    // nearest; one frame = 4 subframes of 128 samples per channel). Like the
++    // loop values they apply to the realigned block assembled on the next decode.
++    uint8_t stream_start_skip = 0;
++    uint8_t stream_output_limit = 0;
++    if (REXCVAR_GET(xma_honor_stream_skip)) {
++      constexpr uint32_t kSubframeSamples = kSamplesPerFrame / 4;
++      const AVDictionaryEntry* start_e = av_dict_get(av_frame_->metadata, "xma_start_skip", nullptr, 0);
++      const AVDictionaryEntry* end_e = av_dict_get(av_frame_->metadata, "xma_end_skip", nullptr, 0);
++      if (start_e && !decoded_start_skip) {
++        const uint32_t n = std::min<uint32_t>(kSamplesPerFrame, std::strtoul(start_e->value, nullptr, 10));
++        stream_start_skip = static_cast<uint8_t>(((n + kSubframeSamples / 2) / kSubframeSamples) << data->is_stereo);
++      }
++      if (end_e && !is_loop_end_frame) {
++        const uint32_t n = std::min<uint32_t>(kSamplesPerFrame, std::strtoul(end_e->value, nullptr, 10));
++        const uint32_t keep = (kSamplesPerFrame - n + kSubframeSamples / 2) / kSubframeSamples;
++        // 0 means "no limit" to Consume(); a frame with nothing audible keeps
++        // its output by skipping it all from the start instead.
++        if (keep == 0) {
++          stream_start_skip = static_cast<uint8_t>(4 << data->is_stereo);
++        } else if (keep < 4) {
++          stream_output_limit = static_cast<uint8_t>(keep << data->is_stereo);
++        }
++      }
++    }
++
+     if (carry_valid_) {
+       std::memcpy(raw_frame_.data(), carry_frame_.data(), carry_bytes);
+       std::memcpy(raw_frame_.data() + carry_bytes, decoded_frame_.data(), pad_bytes);
+@@ -701,8 +738,10 @@ void XmaContext::Decode(XMA_CONTEXT_DATA* data) {
+ 
+     std::memcpy(carry_frame_.data(), decoded_frame_.data() + pad_bytes, carry_bytes);
+     carry_valid_ = true;
+-    pending_output_limit_ = decoded_output_limit;
+-    pending_start_skip_ = decoded_start_skip;
++    pending_output_limit_ = decoded_output_limit && stream_output_limit
++                                ? std::min(decoded_output_limit, stream_output_limit)
++                                : std::max(decoded_output_limit, stream_output_limit);
++    pending_start_skip_ = std::max(decoded_start_skip, stream_start_skip);
+   } else {
+     // A dropped frame breaks the carry's adjacency; re-prime rather than splice
+     // two blocks that are not neighbors.
+-- 
+2.43.0
+

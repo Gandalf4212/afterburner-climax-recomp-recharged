@@ -1,38 +1,47 @@
 name: Build Windows
 
-# Every push to main builds the package (download it from the run's "Artifacts").
-# Publishing a GitHub Release (or pushing a v* tag) also attaches the zip to that release.
+# Every push to main or nativex builds the game (download it from the run's "Artifacts").
+# Pushing a v* tag (e.g. by publishing a release) also attaches a zip to that release.
+# No game files are used or produced: the exe makes its assets folder from the player's own package.
+#
+# The ReXGlue SDK is built from source at REXGLUE_SDK_REF with this repo's patches:
+#   patches/rexglue-sdk/*.patch  -> git am in the SDK tree (NativeXRenderer's SDK changes, XMA skip, glue name fix)
+#   patches/ffmpeg/*.patch       -> git apply in the SDK's thirdparty/FFmpeg (XMA skip metadata)
+# See docs/building.md.
 on:
   push:
-    branches: [main]
+    branches: [main, nativex]
     tags: ['v*']
-  release:
-    types: [published]
   workflow_dispatch:
 
 permissions:
   contents: write
 
 env:
-  REXGLUE_SDK_REF: v0.9.0
-  # Prebuilt package from darkuni/rexglue-sdk-builds: the same patch level as OutRun
-  # (p23: XMA start/end skip honoured, hardware-like XMA start latency, ...).
-  REXGLUE_SDK_PKG: v0.9.0-p23
+  REXGLUE_SDK_REF: v0.10.1
 
 jobs:
   build:
     runs-on: windows-latest
-    timeout-minutes: 240
+    timeout-minutes: 300
     steps:
+      - name: Keep LF line endings, long paths
+        shell: pwsh
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.longpaths true
+
       - name: Checkout project
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install LLVM (clang 20+) and Ninja
         shell: pwsh
         run: |
           choco install llvm ninja -y --no-progress
           "C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
-      
+
       - name: MSVC environment (headers/libs for clang)
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -45,35 +54,8 @@ jobs:
           cmake --version
           ninja --version
 
-      # ---------- ReXGlue SDK ----------
-      # 1) Prebuilt package from darkuni/rexglue-sdk-builds (fast path).
-      # 2) Fallback: this repo's cache, else compile the SDK here.
-      - name: Download prebuilt SDK
-        id: sdk-prebuilt
-        shell: pwsh
-        continue-on-error: true
-        run: |
-          $url = "https://github.com/darkuni/rexglue-sdk-builds/releases/download/sdk-$env:REXGLUE_SDK_PKG/rexglue-sdk-$env:REXGLUE_SDK_PKG-win-amd64-release.zip"
-          Invoke-WebRequest -Uri $url -OutFile sdk.zip
-          Expand-Archive sdk.zip -DestinationPath rexglue-sdk-install
-          Get-Content rexglue-sdk-install\BUILD_INFO.txt
-          "ok=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-
-      - name: Restore SDK install cache
-        id: sdk-cache
-        if: steps.sdk-prebuilt.outputs.ok != 'true'
-        uses: actions/cache@v4
-        with:
-          path: rexglue-sdk-install
-          key: rexglue-sdk-${{ env.REXGLUE_SDK_PKG }}-win-amd64
-
-      - name: Keep LF line endings (SDK patches are LF)
-        if: steps.sdk-prebuilt.outputs.ok != 'true' && steps.sdk-cache.outputs.cache-matched-key == ''
-        shell: pwsh
-        run: git config --global core.autocrlf false
-
+      # ---------- ReXGlue SDK (source tree, patched) ----------
       - name: Checkout ReXGlue SDK
-        if: steps.sdk-prebuilt.outputs.ok != 'true' && steps.sdk-cache.outputs.cache-matched-key == ''
         uses: actions/checkout@v4
         with:
           repository: rexglue/rexglue-sdk
@@ -81,36 +63,27 @@ jobs:
           path: rexglue-sdk
           submodules: recursive
 
-      - name: Checkout SDK patches
-        if: steps.sdk-prebuilt.outputs.ok != 'true' && steps.sdk-cache.outputs.cache-matched-key == '' && env.REXGLUE_SDK_PKG != env.REXGLUE_SDK_REF
-        uses: actions/checkout@v4
-        with:
-          repository: darkuni/rexglue-sdk-builds
-          path: sdk-builds
-
-      - name: Build and install SDK
-        if: steps.sdk-prebuilt.outputs.ok != 'true' && steps.sdk-cache.outputs.cache-matched-key == ''
+      - name: Apply SDK patches
         shell: pwsh
         working-directory: rexglue-sdk
         run: |
-          # Stock package (PKG == REF): no patches. Otherwise apply sdk-builds patches/.
-          Get-ChildItem ..\sdk-builds\patches\*.patch -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object {
-            git apply --ignore-whitespace --whitespace=nowarn $_.FullName
-            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          }
-          cmake --preset win-amd64 `
-            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ `
-            -DREXGLUE_ENABLE_TRACY=OFF `
-            "-DCMAKE_INSTALL_PREFIX=$env:GITHUB_WORKSPACE/rexglue-sdk-install"
-          cmake --build out/build/win-amd64 --config Release --target install --parallel
+          git -c user.name=ci -c user.email=ci@local am --3way (Get-ChildItem ..\patches\rexglue-sdk\*.patch | Sort-Object Name | ForEach-Object FullName)
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git log --oneline -12
+          Push-Location thirdparty\FFmpeg
+          foreach ($p in (Get-ChildItem ..\..\..\patches\ffmpeg\*.patch | Sort-Object Name)) {
+            git apply --whitespace=nowarn $p.FullName
+            if ($LASTEXITCODE -ne 0) { Write-Error "FFmpeg patch failed: $($p.Name)"; exit 1 }
+          }
+          git status --short
+          Pop-Location
 
       # ---------- Game ----------
-      - name: Compiler cache for generated code
+      - name: Compiler cache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           variant: sccache
-          key: after-burner-climax-win-amd64
+          key: abc-recharged-win-amd64
 
       - name: Configure game
         shell: pwsh
@@ -119,8 +92,12 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ `
             "-DCMAKE_C_FLAGS=-march=x86-64-v3" "-DCMAKE_CXX_FLAGS=-march=x86-64-v3" `
+            "-DABC_BUILD=$("$env:GITHUB_SHA".Substring(0,7))" `
             -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache `
-            "-DCMAKE_PREFIX_PATH=$env:GITHUB_WORKSPACE/rexglue-sdk-install"
+            -DABC_SKIP_CODEGEN=ON `
+            -DREXGLUE_ENABLE_TRACY=OFF -DREXGLUE_USE_VULKAN=ON `
+            "-DREXSDK_DIR=$env:GITHUB_WORKSPACE/rexglue-sdk"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Build game
         shell: pwsh
@@ -133,44 +110,19 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item out\after_burner_climax.exe dist\
-          Copy-Item out\after_burner_climax_world.exe dist\
-          Get-ChildItem out -Filter *.dll | Copy-Item -Destination dist\
-          Get-ChildItem "$env:GITHUB_WORKSPACE\rexglue-sdk-install\bin" -Filter *.dll -ErrorAction SilentlyContinue |
+          # SDK built from source: its DLLs (rexruntime, the GPU plugin, SDL...) may sit in subfolders.
+          Get-ChildItem out -Recurse -Filter *.dll | Where-Object { $_.FullName -notmatch 'CMakeFiles' } |
             Where-Object { -not (Test-Path ("dist\" + $_.Name)) } | Copy-Item -Destination dist\
-          @"
-          After Burner Climax - native Windows build (ReXGlue static recompilation)
-          https://github.com/darkuni/afterburner-climax-recomp
-
-          Game files are NOT included. You need your own After Burner Climax XBLA package
-          (the Xbox 360 LIVE file from your console's storage).
-
-          Setup
-            Put your package file in this folder and run after_burner_climax.exe. On the first start it
-            makes the "assets" folder from it; after that the package isn't needed any more. The package can be
-            the file on its own or the whole folder copied from the console (58410A06\000D0000\...).
-            (Already extracted? Put default.xex, the media folder, etc. in an "assets" folder instead.)
-            If Windows says a DLL (e.g. VCRUNTIME140.dll) is missing, install the Microsoft Visual C++
-            Redistributable 2015-2022 (x64): https://aka.ms/vs/17/release/vc_redist.x64.exe
-
-          Two releases of the game are supported: the World release (the retail XBLA package) and the
-          original 1.0.0.0 release. Run after_burner_climax.exe either way: it checks your default.xex and
-          starts after_burner_climax_world.exe for the World release. Keep both exes together.
-
-          F1 / Esc: settings (display mode, resolution, VSync, aspect, filtering, audio, keys). F11: fullscreen.
-          F3: performance overlay. Settings are saved in after_burner_climax.toml.
-          Controls: left stick / arrows = fly, A / Z = machine gun, B / X = missiles, LB RB / C V = Climax,
-          LT RT / A S = brake / accelerate, Start / Enter, Back / Backspace.
-
-          Unofficial fan project, not affiliated with or endorsed by SEGA or Microsoft. The exe contains code
-          machine-translated from the game's executable; game data comes from your own package.
-          ReXGlue SDK: BSD-3-Clause (portions from Xenia) - see licenses\.
-          "@ | Out-File dist\README.txt -Encoding utf8
+          if (-not (Test-Path dist\rexruntime.dll)) { Write-Error "rexruntime.dll missing"; Get-ChildItem out -Recurse -Filter *.dll | Select FullName; exit 1 }
+          Copy-Item packaging\README.txt dist\
           New-Item -ItemType Directory -Force dist\licenses | Out-Null
-          Copy-Item LICENSE dist\licenses\after-burner-climax-recomp-LICENSE.txt
-          if (Test-Path "$env:GITHUB_WORKSPACE\rexglue-sdk-install\share\licenses") {
-            Copy-Item -Recurse "$env:GITHUB_WORKSPACE\rexglue-sdk-install\share\licenses\*" dist\licenses\
+          Copy-Item LICENSE dist\licenses\afterburner-climax-recharged-LICENSE.txt
+          Copy-Item rexglue-sdk\LICENSE dist\licenses\rexglue-sdk-LICENSE.txt
+          Get-ChildItem rexglue-sdk\thirdparty -Directory | ForEach-Object {
+            $lic = Get-ChildItem $_.FullName -File -Filter LICENSE* -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($lic) { Copy-Item $lic.FullName ("dist\licenses\LICENSE-" + $_.Name + ".txt") }
           }
-          Get-ChildItem dist
+          Get-ChildItem dist -Recurse | Select-Object -ExpandProperty FullName
 
       - name: Upload build
         uses: actions/upload-artifact@v4
@@ -182,7 +134,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
-          $zip = "AfterBurnerClimax-$env:GITHUB_REF_NAME-win64.zip"
+          $zip = "AfterBurnerClimaxRecharged-$env:GITHUB_REF_NAME-win64.zip"
           New-Item -ItemType Directory -Force pkg\AfterBurnerClimax | Out-Null
           Copy-Item -Recurse dist\* pkg\AfterBurnerClimax\
           Compress-Archive -Path pkg\AfterBurnerClimax -DestinationPath $zip
@@ -194,3 +146,4 @@ jobs:
         with:
           files: ${{ env.ZIP }}
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}

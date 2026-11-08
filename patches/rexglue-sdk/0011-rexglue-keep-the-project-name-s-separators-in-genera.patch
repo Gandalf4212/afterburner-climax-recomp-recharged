@@ -1,0 +1,31 @@
+From 06bbe39584b6183ba33282d68c6234dc5ce0e8cc Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Sun, 8 Nov 2026 08:58:22 -0500
+Subject: [PATCH 11/11] rexglue: keep the project name's separators in
+ generated/rexglue.cmake
+
+parse_app_name() drops '_', so a project named after_burner_climax got
+glue pointing at afterburnerclimax_pch.h / afterburnerclimax_codegen while
+codegen writes after_burner_climax_pch.h.
+---
+ src/rexglue/commands/project_scan.cpp | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/src/rexglue/commands/project_scan.cpp b/src/rexglue/commands/project_scan.cpp
+index 6b504bb..ca8398d 100644
+--- a/src/rexglue/commands/project_scan.cpp
++++ b/src/rexglue/commands/project_scan.cpp
+@@ -49,6 +49,10 @@ std::string RenderRexglueCmake(std::string_view project_name, std::string_view s
+                                std::string_view entrypoint_out_dir) {
+   rex::codegen::TemplateRegistry registry;
+   auto names = parse_app_name(std::string(project_name));
++  // Codegen names its files after the manifest's project name as written
++  // ("after_burner_climax_pch.h"); parse_app_name drops the separators, so a
++  // name with underscores pointed the glue at files that do not exist.
++  names.original = std::string(project_name);
+   nlohmann::json data = {
+       {"names", names_to_json(names)},
+       {"sdk_version", std::string(sdk_version)},
+-- 
+2.43.0
+

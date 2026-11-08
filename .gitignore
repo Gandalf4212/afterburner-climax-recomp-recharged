@@ -1,7 +1,19 @@
-# Game files are never committed - supply your own dump
+# Game files: never commit (copyrighted; supply your own legally obtained copy)
 assets/
 *.xex
+*.xexp
+
+# Generated C++ IS committed (code machine-translated from default.xex) so the
+# game builds without game files. Only codegen's local bookkeeping is ignored:
+# it holds absolute paths and would make CI try to re-run codegen.
+generated/default/codegen.d
+generated/default/codegen.stamp
+generated/default/codegen.build.stamp
+
 # Build output
 out/
 build/
 dist/
+.vs/
+.vscode/
+*.log

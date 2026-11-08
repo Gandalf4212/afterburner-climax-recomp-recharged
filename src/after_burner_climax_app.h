@@ -20,6 +20,7 @@
 
 #include <imgui.h>
 
+#include "exit_watchdog.h"
 #include "game_keys.h"
 #include "game_menu.h"
 #include "package_setup.h"
@@ -47,24 +48,12 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
         std::exit(1);
       }
     }
-    // Only the exact executable this build was recompiled from can run.
-    // Two releases of the game are supported, each by its own exe (their code
-    // is at different addresses); this one hands off to the other if needed.
-    static const XexVariant kVariants[] = {
-        {"original release (1.0.0.0)", "6f8ba4d7f8f7e7fa73fa90addc57b219691f4e92", 2297856u,
-         "after_burner_climax.exe"},
-        {"World release (0.0.1.2)", "a066b2d60eefb2d5982c07e862d5a9ea8b626eca", 2293760u,
-         "after_burner_climax_world.exe"},
-    };
-#ifdef ABC_WORLD
-    constexpr int kSelf = 1;
-#else
-    constexpr int kSelf = 0;
-#endif
-    const int vc = xex_variant_check(paths.game_data_root, rex::filesystem::GetExecutableFolder(),
-                                     kVariants, 2, kSelf, "After Burner Climax");
-    if (vc == 2) std::exit(0);
-    if (vc == 0) std::exit(1);
+    // Only the exact executable this build was recompiled from can run: the
+    // World release (retail XBLA package), default.xex 0.0.1.2.
+    if (!xex_version_check(paths.game_data_root, "a066b2d60eefb2d5982c07e862d5a9ea8b626eca", 2293760u,
+                           "After Burner Climax")) {
+      std::exit(1);
+    }
     config_path_ = paths.config_path;
   }
 
@@ -121,6 +110,13 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     });
   }
 
+  // Window X / Alt+F4 / menu Quit all come through here before the SDK's
+  // TerminateTitle + _Exit; the watchdog ends the process if that stalls.
+  bool OnWindowCloseRequested() override {
+    exit_watchdog::arm("window close requested");
+    return true;
+  }
+
   // The game must not see keys/buttons while the menu is open.
   void OnPostSetup() override {
     auto* input_sys = static_cast<rex::input::InputSystem*>(runtime()->input_system());
@@ -148,6 +144,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       app_context().CallInUIThreadDeferred([this, fs] { window()->SetFullscreen(fs); });
     };
     host.quit = [this] {
+      exit_watchdog::arm("menu Quit");
       app_context().CallInUIThreadDeferred([this] { window()->RequestClose(); });
     };
     host.on_closed = [this] { menu_ = nullptr; };
