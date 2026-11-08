@@ -103,6 +103,16 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       after Quit). F10 and `--native_x_renderer_verify_at` both work (frame end hook 82252730 fires, ~59 fps).
 - [~] Verify report: layout right; 8.1 % of draws fully match. Missing: game-written constants (8224A530) and
       RunCommandBuffer (822496E0). Details in docs/native-x-renderer.md. Both need new NativeX calls.
+- [x] NativeX patches 0001-0006 (`patches/native_x_renderer`, `git am` in CI on bf965e9). Rebase of Mad Riders'
+      four: conflicts in native_x_renderer.h (both profile fields kept), renderer.cpp (scene size counts as the
+      output's for D126's steady passes), draw.h/draw.cpp (D126 steady passes skip, never wait from the D128
+      budget; both counters kept), device.cpp (D129's thread count replaces the fixed 4), decisions.md.
+      Decisions renumbered D127-D129. Checked with clang -fsyntax-only against v0.10.1 + patches.
+- [x] D130 (patch 0006): `BeginShaderConstantF4` call, flag `kFilledAfter`, `StateTracker::TakeFilledPackets`
+      before the next device call; `RunCommandBuffer` tracked. Hooks `8224A530`, `822496E0`.
+- [x] Shader cache: `src/shader_scan.*` reads FArC (`FArC`, table size, alignment; entries name/offset/
+      compressed/size; gzip each, inflated with stb_image's zlib decoder). World: 101 entries -> 96 unique
+      (41 VS, 55 PS), tested on Linux against the owner's package. Fingerprint: the .farc names/sizes, version 1.
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

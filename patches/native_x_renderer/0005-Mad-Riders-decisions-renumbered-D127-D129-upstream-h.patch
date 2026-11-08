@@ -1,0 +1,542 @@
+From 103eda705c6fb5b495415fd6b9a7f85cc6eba775 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Sun, 8 Nov 2026 09:56:15 -0500
+Subject: [PATCH 5/6] Mad Riders decisions renumbered D127-D129 (upstream has
+ D115-D117)
+
+---
+ docs/architecture.md                            |  2 +-
+ docs/decisions.md                               | 12 ++++++------
+ docs/shader-cache.md                            |  8 ++++----
+ include/native_x_renderer/native_x_renderer.h   |  2 +-
+ include/native_x_renderer/shader_cache_screen.h |  2 +-
+ include/native_x_renderer/shader_sources.h      |  2 +-
+ src/device.cpp                                  |  2 +-
+ src/draw.cpp                                    | 16 ++++++++--------
+ src/draw.h                                      | 16 ++++++++--------
+ src/lz.h                                        |  2 +-
+ src/renderer.cpp                                | 14 +++++++-------
+ src/shaders.cpp                                 | 14 +++++++-------
+ src/shaders.h                                   | 10 +++++-----
+ src/storage.cpp                                 |  4 ++--
+ src/storage.h                                   |  8 ++++----
+ 15 files changed, 57 insertions(+), 57 deletions(-)
+
+diff --git a/docs/architecture.md b/docs/architecture.md
+index b0263fb..2fc4554 100644
+--- a/docs/architecture.md
++++ b/docs/architecture.md
+@@ -171,7 +171,7 @@ All of these live in `native_x_renderer/` and contain no game-specific code.
+ | Command queue | Each call captured on the game's render thread into a command (the tracker's record of register changes (D73), programs, surfaces, arguments, an inline draw's data), run in order by NativeXRenderer's own thread; 4096 commands; the command processor waits for it before every signal to the game (D71). `native_x_renderer_thread` off: run on capture. | SDK `SetSignalGate` (the SDK's `recomp` change 31) |
+ | Shader cache | Microcode copied at load, hashed and analyzed on the render thread; SPIR-V from the SDK's `SpirvShaderTranslator` and the Diligent shader object, per modification, made on two worker threads with a translator each (D34). A draw whose shaders are not ready is skipped. | SDK translator |
+ | Pipeline cache | Pipelines keyed by shader pair, primitive type, render target formats, MSAA, blend/depth/stencil/raster state. Compiled in DiligentCore's thread pool (D28), with DiligentCore's (Vulkan's) pipeline cache; a draw whose pipeline is not ready is skipped. A pipeline not drawn for 600 frames lets go of its textures: its bindings would keep alive textures the texture cache evicted or the resolve registry freed (D55). | DiligentCore |
+-| Shader cache file | One indexed file: the shaders, translations (SPIR-V) and pipelines a game used, and the Vulkan pipeline cache; prepared before the game draws, with a status for its screen (D42, D45, D52, D115, `src/storage.cpp`). | — |
++| Shader cache file | One indexed file: the shaders, translations (SPIR-V) and pipelines a game used, and the Vulkan pipeline cache; prepared before the game draws, with a status for its screen (D42, D45, D52, D127, `src/storage.cpp`). | — |
+ | Guest memory mirror | The GPU-side copy of guest memory that the translated shaders fetch vertices from and indexed draws take indices from, kept current page by page for the ranges draws use. Indices are swapped by the vertex shader. A page invalidated by a CPU write is copied again only if its data hash changed (D35): the invalidation is coarser than the writes. The SDK's range requests keep their merged ranges between calls (D84, the SDK's `recomp` change 32). | SDK `SharedMemory` on a Diligent buffer (D17) |
+ | Primitive processing | Host primitive and vertex shader types, index conversions. | SDK `PrimitiveProcessor` (D17) |
+ | Texture cache | Host textures from fetch constants: address, format, size, tiling, mips, loaded by the SDK's load shaders as DiligentCore compute pipelines. Block formats (DXT1 to DXN) stay compressed on the host when their size is a multiple of the block (D33). Invalidated when the CPU writes their pages (the mirror's page watches); an outdated texture whose guest data hashes the same is not loaded again. Each texture reports its host size, mips included, to the SDK's memory limits. | SDK `TextureCache` on DiligentCore textures (D23) |
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 5dc4dd4..f6aae9c 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4329,7 +4329,7 @@ the ten games, and each one's first screens cold on a new window size: no errors
+ (`recomp-tools/runs/2026-11-07_d126_b`).
+ 
+ **Revisit if:** something is missing for good after a first run in a game: a pass drawn once into a steady target.
+-## D115 — One indexed shader cache file, prepared before the game draws (2026-11-07, Mad Riders)
++## D127 — One indexed shader cache file, prepared before the game draws (2026-11-07, Mad Riders)
+ 
+ **Decision:** the pipeline storage (D42) and the driver's pipeline cache (D45) become one file, by default
+ `<cache root>/native_x_renderer/<title id>.cache`, or where the game puts it with `SetShaderCache` (Mad Riders:
+@@ -4364,14 +4364,14 @@ so the shipped microcode cannot be translated ahead; their variants are kept as
+ translations are guesses (no MSAA centroids, no PsParamGen); what draws ask that was not guessed is translated as
+ before and kept.
+ 
+-## D116 — Scene draws may wait for a first-time compile, within a budget per frame (2026-11-07, Mad Riders)
++## D128 — Scene draws may wait for a first-time compile, within a budget per frame (2026-11-07, Mad Riders)
+ 
+ **Decision:** `native_x_renderer_scene_wait_ms` (default 0, as before): the draws that D101 does not make wait (the
+ scene's) also wait for their shaders' translation and their pipeline, as long as the frame's total wait stays within
+ that many milliseconds; past it they are skipped (D28, D34) until the compile is done. The offscreen waits of D101
+ are unchanged (and not counted). The log's line counts the scene draws that waited and how long.
+ 
+-**Why:** Mad Riders, first run with the shader cache (D115) prepared: what is left to compile while racing is the
++**Why:** Mad Riders, first run with the shader cache (D127) prepared: what is left to compile while racing is the
+ vertex shaders' variants for each vertex layout (the game's D3D patches their fetches, so they cannot be compiled
+ ahead) and their pipelines, about 70-130 skipped draws per 10 s on a first lap: objects blinking out and back. The
+ offscreen draws that already wait took 5.6 ms on average: most compiles fit a few milliseconds of a frame. Waiting
+@@ -4380,16 +4380,16 @@ without a budget (D101 on every draw) made each new pipeline a visible stall (Ma
+ **Revisit if:** a game's compiles are mostly longer than a frame: the budget then only delays the frame without
+ saving the draw.
+ 
+-## D117 — Compressed cache records, a burst wait budget, more pipeline threads (2026-11-07, Mad Riders)
++## D129 — Compressed cache records, a burst wait budget, more pipeline threads (2026-11-07, Mad Riders)
+ 
+ **Decision:** (1) translations' SPIR-V and the driver's cache are stored compressed in the shader cache file (`src/lz.h`:
+ an LZ77 block format laid out as LZ4's; a blob starting `NXZ1`, so files with uncompressed SPIR-V still read). They
+ are compressed by whoever stores them (a worker, the save thread) and decompressed on the worker that makes the host
+ shader, or on the preparing thread for the driver's cache: never on the renderer's thread. (2) A frame in which at
+-least 8 draws were skipped for compiles lets the next frame's scene draws wait up to 33 ms instead of the D116 budget
++least 8 draws were skipped for compiles lets the next frame's scene draws wait up to 33 ms instead of the D128 budget
+ (only when the budget is on). (3) DiligentCore compiles pipelines on cores − 2 threads (4 to 12) instead of 4.
+ 
+-**Why:** Mad Riders after D116: the file was 73 MB after the first launch, 93 MB after a race; the race's start still
++**Why:** Mad Riders after D128: the file was 73 MB after the first launch, 93 MB after a race; the race's start still
+ skipped about 2,000 draws for compiles (about 1,460 for pipelines) while lapping skipped 2–22 per 600 frames. A
+ burst comes when the frames are slow anyway (the countdown, a menu's first visit), so waiting longer there costs
+ little and saves most of those draws; more threads finish the burst sooner.
+diff --git a/docs/shader-cache.md b/docs/shader-cache.md
+index 44d1d5f..70cf04d 100644
+--- a/docs/shader-cache.md
++++ b/docs/shader-cache.md
+@@ -1,4 +1,4 @@
+-# The shader cache file (D115)
++# The shader cache file (D127)
+ 
+ One indexed file holds everything NativeXRenderer compiles for a game, and the renderer prepares all of it
+ before the game draws its first frame, while a status screen shows the progress. On the first launch a game can
+@@ -168,7 +168,7 @@ since the file was last written whole (a record cut short ends the file; the nex
+ | Kind | Key / sub | Bytes |
+ |---|---|---|
+ | `S` shader | microcode hash / – (type: `xenos::ShaderType`) | big-endian microcode |
+-| `T` translation | hash / modification | the translator's SPIR-V (before `PrepareForDiligent`), compressed (`NXZ1` + `lz.h` block, D117) |
++| `T` translation | hash / modification | the translator's SPIR-V (before `PrepareForDiligent`), compressed (`NXZ1` + `lz.h` block, D129) |
+ | `P` pipeline | XXH3 of the record | `PipelineRecord` (shader hashes and modifications, `PipelineState` with null shaders) |
+ | `V` driver cache | – | DiligentCore's `IPipelineStateCache` data (Vulkan's pipeline cache), compressed the same way |
+ | `G` game scanned | the game's fingerprint | – |
+@@ -190,9 +190,9 @@ with the driver's cache.
+ ## 5. While the game runs (first visits)
+ 
+ What the cache cannot know ahead (vertex shader variants per vertex layout, pipelines of new state combinations) is
+-compiled when first drawn. Those draws wait within a per-frame budget (`native_x_renderer_scene_wait_ms`, D116; a
++compiled when first drawn. Those draws wait within a per-frame budget (`native_x_renderer_scene_wait_ms`, D128; a
+ game exposes it as a setting, Mad Riders' F1 > New shaders, 8 ms by default) and are skipped past it; a frame with 8 or
+-more skipped draws lets the next one wait up to 33 ms (a burst: a race's start, D117). Pipelines compile on cores − 2
++more skipped draws lets the next one wait up to 33 ms (a burst: a race's start, D129). Pipelines compile on cores − 2
+ threads (4–12), translations on 2 workers, every core but one during a burst of more than 4.
+ 
+ ## 6. Changing it
+diff --git a/include/native_x_renderer/native_x_renderer.h b/include/native_x_renderer/native_x_renderer.h
+index 4549c79..2d32aa6 100644
+--- a/include/native_x_renderer/native_x_renderer.h
++++ b/include/native_x_renderer/native_x_renderer.h
+@@ -212,7 +212,7 @@ struct Profile {
+ void Initialize(const Profile& profile, rex::system::IGraphicsSystem* graphics, rex::ui::Window* window,
+                 const std::filesystem::path& cache_root = {});
+ 
+-// The shader cache file (D115): every shader, translation (SPIR-V) and pipeline the game used, and the driver's
++// The shader cache file (D127): every shader, translation (SPIR-V) and pipeline the game used, and the driver's
+ // pipeline binaries, in one indexed file. Without this call it is <cache_root>/native_x_renderer/<title id>.cache.
+ // At each start, before the game's first frame is drawn, the renderer prepares everything the file holds (the
+ // game waits, its thread blocked in the GPU's command processor, while the renderer shows GetShaderCacheStatus
+diff --git a/include/native_x_renderer/shader_cache_screen.h b/include/native_x_renderer/shader_cache_screen.h
+index b525f45..9ac7d70 100644
+--- a/include/native_x_renderer/shader_cache_screen.h
++++ b/include/native_x_renderer/shader_cache_screen.h
+@@ -1,4 +1,4 @@
+-// NativeXRenderer - a ready-made status screen for the shader cache (D115), as a Dear ImGui dialog of the
++// NativeXRenderer - a ready-made status screen for the shader cache (D127), as a Dear ImGui dialog of the
+ // SDK's ImGuiDrawer. While the renderer prepares the cache file before the game's first frame, the window shows
+ // the game's ImGui dialogs on black: this one draws a full-window panel with the game's name, a progress bar
+ // over the whole preparation, the steps, and what the file holds; then "Ready", and a short fade into the game.
+diff --git a/include/native_x_renderer/shader_sources.h b/include/native_x_renderer/shader_sources.h
+index b797830..3e61b32 100644
+--- a/include/native_x_renderer/shader_sources.h
++++ b/include/native_x_renderer/shader_sources.h
+@@ -1,4 +1,4 @@
+-// NativeXRenderer - finding the shaders a game ships, for the shader cache's first build (D115).
++// NativeXRenderer - finding the shaders a game ships, for the shader cache's first build (D127).
+ //
+ // SetShaderCache (native_x_renderer.h) takes a fingerprint and a scan function that returns every shader
+ // the game ships. These helpers cover the usual cases, so a game's scan is a few lines:
+diff --git a/src/device.cpp b/src/device.cpp
+index 9180cc7..b8c21c6 100644
+--- a/src/device.cpp
++++ b/src/device.cpp
+@@ -91,7 +91,7 @@ bool Device::Create(void* native_window, bool half_precision) {
+   // (a level, a new effect), and the game's own threads need the CPU.
+   create_info.Features.AsyncShaderCompilation = DEVICE_FEATURE_STATE_OPTIONAL;
+   if (half_precision) create_info.Features.ShaderFloat16 = DEVICE_FEATURE_STATE_OPTIONAL;
+-  // D117: pipelines compile on these (D28); more on CPUs that have the cores, so a burst of new pipelines (a race's
++  // D129: pipelines compile on these (D28); more on CPUs that have the cores, so a burst of new pipelines (a race's
+   // start) is through sooner. They sleep when there is nothing to compile.
+   {
+     unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+diff --git a/src/draw.cpp b/src/draw.cpp
+index 9ea77aa..6440b38 100644
+--- a/src/draw.cpp
++++ b/src/draw.cpp
+@@ -123,7 +123,7 @@ uint8_t Stencil(xenos::StencilOp op) { return uint8_t(uint32_t(op) + 1); }
+ // (D101): a pipeline the driver has never seen takes up to a few hundred milliseconds.
+ constexpr std::chrono::milliseconds kPipelineWaitLimit{3000};
+ constexpr double kLongPipelineWaitMs = 50.0;
+-// D117: a frame with this many draws skipped for compiles lets the next one wait this long (scene draws, D116).
++// D129: a frame with this many draws skipped for compiles lets the next one wait this long (scene draws, D128).
+ constexpr uint32_t kBurstSkips = 8;
+ constexpr double kBurstWaitMs = 33.0;
+ 
+@@ -327,7 +327,7 @@ bool DrawPath::Initialize(Device& device, rg::RegisterFile& registers, rex::memo
+   return true;
+ }
+ 
+-// The shader cache file (D42, D115): opened here; what it holds is prepared by PrepareStep before the game draws.
++// The shader cache file (D42, D127): opened here; what it holds is prepared by PrepareStep before the game draws.
+ void DrawPath::OpenStorage(const std::filesystem::path& storage, const ShaderCacheSource* source) {
+   prep_start_ = std::chrono::steady_clock::now();
+   storage_ = std::make_unique<PipelineStorage>();
+@@ -376,7 +376,7 @@ void DrawPath::OpenStorage(const std::filesystem::path& storage, const ShaderCac
+   prep_translations_ = std::move(translations);
+   prep_records_ = std::move(pipelines);
+   shaders_->SetStorage(storage_.get());
+-  // The game's own shaders (D115): when the file was not prepared for this game data yet.
++  // The game's own shaders (D127): when the file was not prepared for this game data yet.
+   if (source && source->game_fingerprint && source->scan && !storage_->GameScanned(source->game_fingerprint)) {
+     game_fingerprint_ = source->game_fingerprint;
+     game_scan_ = source->scan;
+@@ -407,7 +407,7 @@ void DrawPath::PublishStatus() {
+   WriteShaderCacheStatus(status_);
+ }
+ 
+-// The pixel shaders the game ships, translated for what their draws will most likely ask (D115): the
++// The pixel shaders the game ships, translated for what their draws will most likely ask (D127): the
+ // interpolators that the game's vertex shaders write most often (the kMasks most common sets, each limited to what
+ // the pixel shader reads), no MSAA centroids, no PsParamGen, and the early depth hint where the shader allows it.
+ // A guess: what draws ask that was not guessed is translated as before and kept in the file. More guesses cost
+@@ -638,7 +638,7 @@ void DrawPath::SavePipelineCache(bool compact, bool only_if_driver_changed) {
+   // On a thread of its own (D45): the driver's serialization and the write. Vulkan's pipeline cache is
+   // synchronized internally, so pipelines can be created meanwhile; if one is added between GetData's two
+   // calls, GetData returns nothing and the save is tried again later. The file is written to a temporary and
+-  // renamed over the cache file, so a process killed while writing leaves the last complete one (D115: the
++  // renamed over the cache file, so a process killed while writing leaves the last complete one (D127: the
+   // driver's cache is in the shader cache file, written whole).
+   saving_ = true;
+   save_thread_ = std::thread([cache = pipeline_cache_, storage = storage_.get(), created = pipelines_unsaved_,
+@@ -927,7 +927,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+   // D101: a draw into an offscreen target waits for its translations (the workers finish them on their own).
+   const auto wait_start = std::chrono::steady_clock::now();
+   bool waited = false;
+-  // D116: the other draws wait too, within what is left of the frame's budget (short compiles do not show).
++  // D128: the other draws wait too, within what is left of the frame's budget (short compiles do not show).
+   auto may_wait = [&] {
+     auto elapsed = std::chrono::steady_clock::now() - wait_start;
+     if (elapsed >= kPipelineWaitLimit) return false;
+@@ -1803,14 +1803,14 @@ void DrawPath::EndFrame() {
+   // cache saved, on a thread of its own (D45), once nothing new was compiled for 10 s (at 60 FPS), and at
+   // most every 5 minutes (D52): new areas bring pipelines every few seconds, and each save writes tens of
+   // MB. What is not saved yet is in the records, compiled again at the next start.
+-  // D116; D117: while many draws wait for compiles (a race's start, a menu's first visit, where the frames are slow
++  // D128; D129: while many draws wait for compiles (a race's start, a menu's first visit, where the frames are slow
+   // anyway), the next frame may wait up to the burst budget, so fewer of them are skipped.
+   scene_wait_left_ms_ = scene_wait_budget_ms_ > 0.0 && frame_skipped_ >= kBurstSkips
+                             ? std::max(scene_wait_budget_ms_, kBurstWaitMs)
+                             : scene_wait_budget_ms_;
+   frame_skipped_ = 0;
+   if (storage_) storage_->Flush();
+-  // A burst of new translations in play (a new area, D115): every core but one on them until it is through, so
++  // A burst of new translations in play (a new area, D127): every core but one on them until it is through, so
+   // their draws are skipped for fewer frames.
+   if (prep_ == Prep::kDone) {
+     bool burst = shaders_->pending() > 4;
+diff --git a/src/draw.h b/src/draw.h
+index cf9b245..960db17 100644
+--- a/src/draw.h
++++ b/src/draw.h
+@@ -60,7 +60,7 @@ class ShaderCache;
+ class Textures;
+ struct HostTarget;
+ 
+-// The shader cache's status (D115), written by the draw path, read by GetShaderCacheStatus from any thread.
++// The shader cache's status (D127), written by the draw path, read by GetShaderCacheStatus from any thread.
+ void WriteShaderCacheStatus(const ShaderCacheStatus& status);
+ ShaderCacheStatus ReadShaderCacheStatus();
+ 
+@@ -76,7 +76,7 @@ class DrawPath {
+                   ResolvedTextures& resolved, const RenderScale& scale, const std::filesystem::path& storage,
+                   const ShaderCacheSource* source);
+ 
+-  // D115: prepares what the shader cache file holds (and the game's own shaders, the first time), a step of
++  // D127: prepares what the shader cache file holds (and the game's own shaders, the first time), a step of
+   // about 12 ms at a time on the renderer's thread, while the game waits; the status is published for
+   // GetShaderCacheStatus. True when done (at once without a cache file).
+   bool PrepareStep();
+@@ -170,7 +170,7 @@ class DrawPath {
+     wait_for_pipelines_ = on;
+     steady_pass_ = steady_pass;
+   }
+-  // D116: the other draws wait for their shaders and pipeline too, up to this many milliseconds per frame in all
++  // D128: the other draws wait for their shaders and pipeline too, up to this many milliseconds per frame in all
+   // (then they are skipped, D28/D34): a compile that finishes within it does not show. 0: skipped at once.
+   void SetSceneWaitBudget(double ms) {
+     scene_wait_budget_ms_ = ms;
+@@ -193,7 +193,7 @@ class DrawPath {
+     uint32_t waited = 0;
+     double waited_ms = 0.0, max_waited_ms = 0.0;
+     uint32_t steady_skipped = 0;  // D126: draws of passes drawn frame after frame skipped instead of waiting
+-    // Of them, the scene's draws that waited within the frame's budget (D116), and how long in all.
++    // Of them, the scene's draws that waited within the frame's budget (D128), and how long in all.
+     uint32_t scene_waited = 0;
+     double scene_waited_ms = 0.0;
+     // Texture bindings: resolved, guest, placeholders, and placeholders for the other dimension's binding.
+@@ -240,7 +240,7 @@ class DrawPath {
+   rex::graphics::SpirvShader* FindShader(rex::graphics::xenos::ShaderType type, const StateTracker::Program& program,
+                                          bool* new_failure);
+   Diligent::IShader* FindHostShader(rex::graphics::SpirvShader& shader, uint64_t modification, bool& pending);
+-  // The shader cache file (D42, D115): read here, prepared by PrepareStep.
++  // The shader cache file (D42, D127): read here, prepared by PrepareStep.
+   void OpenStorage(const std::filesystem::path& storage, const ShaderCacheSource* source);
+   void QueueGameTranslations();
+   void PublishStatus();
+@@ -263,8 +263,8 @@ class DrawPath {
+   bool aspect_box_ = false;  // D43
+   bool wait_for_pipelines_ = false;  // D101
+   bool steady_pass_ = false;         // D126
+-  double scene_wait_budget_ms_ = 0.0, scene_wait_left_ms_ = 0.0;  // D116
+-  uint32_t frame_skipped_ = 0;  // draws skipped for compiles in this frame (D117)
++  double scene_wait_budget_ms_ = 0.0, scene_wait_left_ms_ = 0.0;  // D128
++  uint32_t frame_skipped_ = 0;  // draws skipped for compiles in this frame (D129)
+   bool jitter_on_ = false;   // D47
+   float jitter_[2] = {};
+   uint32_t jitter_size_[2] = {};
+@@ -287,7 +287,7 @@ class DrawPath {
+   };
+   std::vector<Stored> stored_;  // stored pipelines not created yet
+   uint32_t stored_total_ = 0;
+-  // Preparing the file (D115).
++  // Preparing the file (D127).
+   enum class Prep { kScan, kAnalyze, kTranslate, kPipelines, kSave, kDone };
+   Prep prep_ = Prep::kDone;
+   std::chrono::steady_clock::time_point prep_start_;
+diff --git a/src/lz.h b/src/lz.h
+index 7439a6b..c5d3417 100644
+--- a/src/lz.h
++++ b/src/lz.h
+@@ -1,4 +1,4 @@
+-// NativeXRenderer - a small LZ77 block compressor for the shader cache file (internal, D117).
++// NativeXRenderer - a small LZ77 block compressor for the shader cache file (internal, D129).
+ //
+ // The LZ4 block format's layout (token, literal run, 16-bit offset, match run), written from scratch: greedy
+ // matching through a 4096-entry hash table, compressing at hundreds of MB/s and decompressing faster. SPIR-V is
+diff --git a/src/renderer.cpp b/src/renderer.cpp
+index 6550868..51ad23d 100644
+--- a/src/renderer.cpp
++++ b/src/renderer.cpp
+@@ -98,7 +98,7 @@ REXCVAR_DEFINE_BOOL(native_x_renderer_skip_steady_passes, true, "NativeXRenderer
+                     "(D126); false: every offscreen draw waits");
+ REXCVAR_DEFINE_DOUBLE(native_x_renderer_scene_wait_ms, 0.0, "NativeXRenderer",
+                       "The milliseconds per frame the other draws may wait, in all, for a shader or pipeline compiled "
+-                      "for the first time, before they are skipped (D116): compiles that finish within it do not show "
++                      "for the first time, before they are skipped (D128): compiles that finish within it do not show "
+                       "as objects popping in. 0: skipped at once (no stutter)");
+ REXCVAR_DEFINE_BOOL(native_x_renderer_fill_screen, true, "NativeXRenderer",
+                     "Fill an output that is not 16:9, with a render scale per axis, when the game's hooks widen its "
+@@ -227,7 +227,7 @@ GuestSurface g_scene_color_surface;
+ // The reduced targets drawn or cleared in this view (D49), with their surfaces.
+ std::vector<std::pair<GuestSurface, HostTarget*>> g_reduced_used;
+ std::filesystem::path g_cache_root;  // the runtime's cache directory (D42)
+-ShaderCacheSource g_cache_source;    // SetShaderCache (D115)
++ShaderCacheSource g_cache_source;    // SetShaderCache (D127)
+ std::atomic<bool> g_cache_prepared{false};  // PrepareShaderCache ran
+ std::mutex g_prepare_mutex;                 // held while it runs (on the renderer's thread or its own)
+ std::unique_ptr<DrawPath> g_draw;  // created on the first draw (it needs the tracker's register file)
+@@ -394,7 +394,7 @@ struct Creation {
+   uint64_t waited_draws = 0;
+   double waited_ms = 0.0, max_waited_ms = 0.0;
+   uint32_t steady_skipped = 0;  // D126
+-  uint64_t scene_waited_draws = 0;  // of them, scene draws within the frame's budget (D116)
++  uint64_t scene_waited_draws = 0;  // of them, scene draws within the frame's budget (D128)
+   double scene_waited_ms = 0.0;
+ } g_creation;
+ 
+@@ -441,7 +441,7 @@ GuestSurface Tiled(GuestSurface s) {
+ 
+ float GuestFloat(const uint8_t* base, uint32_t address) { return LoadFloat(base, address); }
+ 
+-// The shader cache file (D42, D115): the game's (SetShaderCache), else <cache root>/native_x_renderer/<title id>.cache.
++// The shader cache file (D42, D127): the game's (SetShaderCache), else <cache root>/native_x_renderer/<title id>.cache.
+ std::filesystem::path StoragePath(uint32_t title_id) {
+   if (!REXCVAR_GET(native_x_renderer_pipeline_storage)) return {};
+   if (!g_cache_source.file.empty()) return g_cache_source.file;
+@@ -583,7 +583,7 @@ void CarryColorIntoDepth(const GuestSurface& surface, HostTarget* depth) {
+   }
+ }
+ 
+-// The draw path, created before the first command (D115: it opens the shader cache file).
++// The draw path, created before the first command (D127: it opens the shader cache file).
+ bool EnsureDrawPath() {
+   if (g_draw) return true;
+   if (g_draw_failed) return false;
+@@ -605,7 +605,7 @@ bool EnsureDrawPath() {
+ 
+ void FinishPresent();
+ 
+-// D115: before the game's first command is drawn, the shader cache is prepared while the game waits (its thread is
++// D127: before the game's first command is drawn, the shader cache is prepared while the game waits (its thread is
+ // held in the command processor's signal gate, or here on its own thread). The window shows the game's ImGui
+ // dialogs meanwhile (its status screen), on black, at up to 60 frames per second.
+ void PrepareShaderCache() {
+@@ -2181,7 +2181,7 @@ void ExecuteFrameEnd(const Command& c) {
+                 "max {:.1f}), {} pipelines ({:.1f} ms, max {:.1f}); on worker threads: {} translations ({:.1f} ms, "
+                 "max {:.1f}); draws skipped: {} while a shader was translated, {} while their pipeline compiled; "
+                 "draws that waited for theirs: {} ({:.1f} ms, max {:.1f}), of them {} scene draws within the frame's "
+-                "budget (D116, {:.1f} ms), of steady passes that did not (D126): {}",
++                "budget (D128, {:.1f} ms), of steady passes that did not (D126): {}",
+                 frame, g_creation.analyses.count, g_creation.analyses.ms, g_creation.analyses.max_ms,
+                 g_creation.pipelines.count, g_creation.pipelines.ms, g_creation.pipelines.max_ms,
+                 g_creation.translations.count, g_creation.translations.ms, g_creation.translations.max_ms,
+diff --git a/src/shaders.cpp b/src/shaders.cpp
+index 9b04471..36a722f 100644
+--- a/src/shaders.cpp
++++ b/src/shaders.cpp
+@@ -73,7 +73,7 @@ bool ShaderCache::Initialize(IRenderDevice* device, const RenderScale& scale) {
+   translator_->SetFractionalResolutionScale(scale_.x, scale_.y);
+   // Two workers: a level load translates about a hundred shaders at up to 2.7 ms each, and the game's
+   // threads and DiligentCore's four pipeline compilation threads (D28) need the cores at the same time.
+-  // D115: more, which take work only while the game waits for the shader cache (SetBoost).
++  // D127: more, which take work only while the game waits for the shader cache (SetBoost).
+   unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+   base_workers_ = cores >= 4 ? 2 : 1;
+   unsigned worker_count = std::max(base_workers_, cores - 1);
+@@ -86,7 +86,7 @@ uint64_t ShaderCache::environment() const {
+   struct {
+     uint32_t tag, spirv_version;
+     float scale_x, scale_y;
+-  } environment{2, uint32_t(features_.spirv_version), scale_.x, scale_.y};  // 2: fewer guesses, D115
++  } environment{2, uint32_t(features_.spirv_version), scale_.x, scale_.y};  // 2: fewer guesses, D127
+   return XXH3_64bits(&environment, sizeof(environment));
+ }
+ 
+@@ -153,7 +153,7 @@ IShader* ShaderCache::GetHostShader(rg::SpirvShader& shader, uint64_t modificati
+       job.sets_bindings = true;  // translated for real: it writes the shader's bindings
+     }
+     job.bindings = bindings.get();
+-    // Stored before (D115): made from its SPIR-V, not translated again.
++    // Stored before (D127): made from its SPIR-V, not translated again.
+     if (storage_ && !job.sets_bindings) {
+       storage_->FindTranslation(uint8_t(shader.type()), shader.ucode_data_hash(), modification, job.stored);
+     }
+@@ -201,7 +201,7 @@ void ShaderCache::Finish(const Job& job, uint32_t state) {
+ }
+ 
+ void ShaderCache::Worker(unsigned index) {
+-  const bool extra = index >= base_workers_;  // works only while boosted (D115)
++  const bool extra = index >= base_workers_;  // works only while boosted (D127)
+   rg::SpirvShaderTranslator translator(features_, true, true, false);
+   // The scale the shaders revert where they read pixel positions and resolved textures (the SDK's recomp change 30).
+   translator.SetFractionalResolutionScale(scale_.x, scale_.y);
+@@ -218,7 +218,7 @@ void ShaderCache::Worker(unsigned index) {
+       if (jobs_.empty() || (extra && !boost_.load(std::memory_order_acquire))) continue;
+       job = std::move(jobs_.front());
+       jobs_.pop_front();
+-      // Its shader's bindings are still being written by another job: later (D115).
++      // Its shader's bindings are still being written by another job: later (D127).
+       if (!job.motion && !job.sets_bindings && job.bindings &&
+           !job.bindings->ready.load(std::memory_order_acquire)) {
+         jobs_.push_back(std::move(job));
+@@ -254,8 +254,8 @@ void ShaderCache::Translate(rg::SpirvShaderTranslator& translator, const Job& jo
+   auto bindings_written = [&] {
+     if (job.sets_bindings && job.bindings) job.bindings->ready.store(true, std::memory_order_release);
+   };
+-  // From the cache file (D115): the SPIR-V the translator made for this modification in an earlier run,
+-  // decompressed here, on the worker (D117). If it does not unpack, it is translated again.
++  // From the cache file (D127): the SPIR-V the translator made for this modification in an earlier run,
++  // decompressed here, on the worker (D129). If it does not unpack, it is translated again.
+   if (!job.stored.empty() && PipelineStorage::Unpack(job.stored, job.host->spirv)) {
+     loaded_.fetch_add(1, std::memory_order_relaxed);
+   } else {
+diff --git a/src/shaders.h b/src/shaders.h
+index af07b8f..4f18d61 100644
+--- a/src/shaders.h
++++ b/src/shaders.h
+@@ -73,14 +73,14 @@ class ShaderCache {
+   // An analyzed shader already in the cache, nullptr if not (or if its analysis failed).
+   rex::graphics::SpirvShader* Find(rex::graphics::xenos::ShaderType type, uint64_t hash) const;
+   // New shaders and translations (with their SPIR-V) are recorded there, and translations stored there are
+-  // made from their SPIR-V instead of being translated again (D42, D115).
++  // made from their SPIR-V instead of being translated again (D42, D127).
+   void SetStorage(PipelineStorage* storage) { storage_ = storage; }
+ 
+   // What the translations' SPIR-V depends on besides the shader and the modification (the render scale, the
+-  // SPIR-V version): stored SPIR-V of another environment is not used (D115). After Initialize.
++  // SPIR-V version): stored SPIR-V of another environment is not used (D127). After Initialize.
+   uint64_t environment() const;
+ 
+-  // D115: while the game waits for the shader cache, every core but one works on the queue; otherwise the
++  // D127: while the game waits for the shader cache, every core but one works on the queue; otherwise the
+   // two workers of D34 do.
+   void SetBoost(bool boost) {
+     boost_.store(boost, std::memory_order_release);
+@@ -118,7 +118,7 @@ class ShaderCache {
+   // A shader's texture and sampler bindings are written by its first translation (the SDK's
+   // SpirvShaderTranslator, "after translation"), and draws need them: a translation made from stored SPIR-V
+   // writes none. So in every run each shader's first translation is translated for real, and its other
+-  // translations are finished only once it has written them (D115: without this, objects drew without their
++  // translations are finished only once it has written them (D127: without this, objects drew without their
+   // textures, black).
+   struct Bindings {
+     std::atomic<bool> ready{false};
+@@ -130,7 +130,7 @@ class ShaderCache {
+     HostShader* host = nullptr;
+     bool motion = false;           // the motion vertex shader of a translation already made
+     const HostShader* base = nullptr;  // motion: the translation's host shader (ready)
+-    std::vector<uint8_t> stored;  // the translation's SPIR-V from the cache file, as stored (D115, D117)
++    std::vector<uint8_t> stored;  // the translation's SPIR-V from the cache file, as stored (D127, D129)
+   };
+ 
+   void Worker(unsigned index);
+diff --git a/src/storage.cpp b/src/storage.cpp
+index 31482d1..0f21df2 100644
+--- a/src/storage.cpp
++++ b/src/storage.cpp
+@@ -19,9 +19,9 @@ namespace {
+ 
+ constexpr char kMagic[8] = {'N', 'X', 'R', 'C', 'A', 'C', 'H', 'E'};
+ // Bump when what a record means changes: PipelineState's layout or its DiligentCore enums, the
+-// translator's modification bits, the host formats, the records themselves (3: one indexed file, D115).
++// translator's modification bits, the host formats, the records themselves (3: one indexed file, D127).
+ constexpr uint32_t kVersion = 3;
+-// D117: a blob that starts with this is compressed (lz.h); SPIR-V as older files kept it starts with 0x07230203.
++// D129: a blob that starts with this is compressed (lz.h); SPIR-V as older files kept it starts with 0x07230203.
+ constexpr uint8_t kPacked[4] = {'N', 'X', 'Z', '1'};
+ 
+ std::vector<uint8_t> Pack(const void* data, size_t size) {
+diff --git a/src/storage.h b/src/storage.h
+index a61047c..5841069 100644
+--- a/src/storage.h
++++ b/src/storage.h
+@@ -1,5 +1,5 @@
+ // NativeXRenderer - the shader cache file: every shader, translation and pipeline a game uses, in one
+-// indexed file kept between runs (internal, D42; one file since D115).
++// indexed file kept between runs (internal, D42; one file since D127).
+ //
+ // The first time a draw needs a shader or a pipeline in a run, it is skipped while the shader is translated
+ // (D34) and the pipeline compiled (D28). The cache file removes that:
+@@ -7,7 +7,7 @@
+ //     and every pipeline (its two shaders, their modifications, and the fixed-function state) is kept;
+ //   - DiligentCore's pipeline cache (Vulkan's, the driver's binaries) is kept in the same file;
+ //   - at the next start, before the game draws, the shaders are analyzed, their host shaders made from the
+-//     stored SPIR-V (no translation), and every pipeline created and compiled (D115: the game waits, with a
++//     stored SPIR-V (no translation), and every pipeline created and compiled (D127: the game waits, with a
+ //     status screen, instead of drawing objects late).
+ // A game can also hand over every shader it ships (SetShaderCache): the first start then analyzes all of
+ // them and translates the pixel shaders for the interpolator sets its vertex shaders write.
+@@ -79,7 +79,7 @@ class PipelineStorage {
+   void MarkGameScanned(uint64_t fingerprint);
+   bool GameScanned(uint64_t fingerprint) const;
+ 
+-  // The stored SPIR-V of a translation, as stored (compressed, D117: Unpack it, on a worker thread); false if
++  // The stored SPIR-V of a translation, as stored (compressed, D129: Unpack it, on a worker thread); false if
+   // there is none. Any thread.
+   bool FindTranslation(uint8_t type, uint64_t hash, uint64_t modification, std::vector<uint8_t>& stored) const;
+   // SPIR-V from what FindTranslation gave (compressed, or as older files stored it). False if it is not valid.
+@@ -123,7 +123,7 @@ class PipelineStorage {
+   std::mutex file_mutex_;     // the file on disk
+   // Sorted: written out as the index. Shared and never changed once stored (a replacement is a new vector), so
+   // writing the file whole takes a copy of the pointers under the lock, not of the bytes: the renderer's thread and
+-  // the workers add records meanwhile without waiting (D115: copying 280 MB under the lock stalled them).
++  // the workers add records meanwhile without waiting (D127: copying 280 MB under the lock stalled them).
+   using Bytes = std::shared_ptr<const std::vector<uint8_t>>;
+   std::map<Key, Bytes> records_;
+   std::vector<uint8_t> pending_;                 // journal records not appended yet
+-- 
+2.43.0
+

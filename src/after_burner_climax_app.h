@@ -29,6 +29,10 @@
 
 #ifdef ABC_NATIVE_X_RENDERER
 #include <native_x_renderer/native_x_renderer.h>
+#include <native_x_renderer/shader_cache_screen.h>
+#include <memory>
+#include <rex/system/xthread.h>
+#include "shader_scan.h"
 namespace after_burner_climax {
 const native_x_renderer::Profile& NativeXRendererProfile();
 }
@@ -65,11 +69,12 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       std::exit(1);
     }
     config_path_ = paths.config_path;
+    game_data_root_ = paths.game_data_root;
   }
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
 #ifdef ABC_BUILD
-    REXLOG_INFO("After Burner Climax Recharged, build {}", ABC_BUILD);
+    REXLOG_INFO("After Burner Climax Recomp (Recharged), build {}", ABC_BUILD);
 #endif
     ApplyRenderer();
     // GPU emulation is opt-in in ReXGlue (gpu_plugin cvar). Default to the
@@ -111,11 +116,27 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       rex::cvar::SetFlagByName("recomp_defaults_version", "3");
       recomp_ui::save_config(config_path_);
     }
+#ifdef ABC_NATIVE_X_RENDERER
+    // Version 4: with NativeX, draws wait up to 8 ms per frame for a shader compiled for the first time
+    // (F1 > New shaders; as Mad Riders).
+    if (rex::cvar::Query<int32_t>("recomp_defaults_version") < 4) {
+      rex::cvar::SetFlagByName("native_x_renderer_scene_wait_ms", "8.0");
+      rex::cvar::SetFlagByName("recomp_defaults_version", "4");
+      if (!config_path_.empty()) recomp_ui::save_config(config_path_);
+    }
+#endif
     REXLOG_INFO("Audio buffer: {} frames", rex::cvar::Query<int32_t>("audio_maxqframes"));
   }
 
   void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {
+#ifdef ABC_NATIVE_X_RENDERER
+    // The shader cache's status while it is prepared (draws nothing once ready, or with Xenia).
+    native_x_renderer::ShaderCacheScreen::Style style;
+    style.title = "AFTER BURNER CLIMAX";
+    shader_cache_screen_ = std::make_unique<native_x_renderer::ShaderCacheScreen>(drawer, style);
+#else
     (void)drawer;
+#endif
     rex::ui::RegisterBind("bind_menu", "F1", "Open/close the settings menu",
                           [this] { ToggleMenu(); });
     rex::ui::RegisterBind("bind_menu_alt", "Escape", "Open/close the settings menu",
@@ -139,6 +160,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   // The game must not see keys/buttons while the menu is open.
   void OnPostSetup() override {
 #ifdef ABC_NATIVE_X_RENDERER
+    SetUpShaderCache();
     // Always initialized: with native_x_renderer off it only arms what --native_x_renderer_trace / _verify ask for.
     native_x_renderer::Initialize(after_burner_climax::NativeXRendererProfile(),
                                   runtime() ? runtime()->graphics_system() : nullptr, window(),
@@ -153,6 +175,18 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       });
     }
   }
+
+#ifdef ABC_NATIVE_X_RENDERER
+  // With NativeX, the shader cache is prepared before the game's main thread runs at all (held here, resumed
+  // when done), so its timers, movies and audio never see the wait; the status screen shows meanwhile.
+  void OnPostLaunchModule(rex::system::XThread* thread) override {
+    if (!thread || !native_x_renderer::Renders()) return;
+    thread->Suspend();
+    native_x_renderer::PrepareShaderCacheBeforeLaunch([thread] { thread->Resume(); });
+  }
+
+  void OnShutdown() override { shader_cache_screen_.reset(); }
+#endif
 
  private:
   // recomp_renderer (F1 > Renderer): "xenia" = the SDK's Xenos plugin draws
@@ -214,5 +248,25 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   }
 
   std::filesystem::path config_path_;
+  std::filesystem::path game_data_root_;
+#ifdef ABC_NATIVE_X_RENDERER
+  std::unique_ptr<native_x_renderer::ShaderCacheScreen> shader_cache_screen_;
+
+  // NativeX's shader cache: shaders.cache next to the exe, one compressed indexed file (NativeX D127, D129). Its
+  // first build translates every shader the game ships (shader_scan.h: media\x360\shader_hlsl.farc) and the
+  // pipelines are learned while playing; a changed shader archive (fingerprint) builds them again.
+  void SetUpShaderCache() {
+    native_x_renderer::ShaderCacheSource source;
+    source.file = rex::filesystem::GetExecutableFolder() / "shaders.cache";
+    const auto x360_dir = game_data_root_ / "media" / "x360";
+    source.game_fingerprint = shader_scan::fingerprint(x360_dir);
+    source.scan = [x360_dir](const std::function<void(uint32_t, uint32_t)>& progress) {
+      shader_scan::Result found = shader_scan::scan(x360_dir, progress);
+      REXLOG_INFO("Shader scan: {} shaders in {} archive entries", found.shaders.size(), found.entries);
+      return std::move(found.shaders);
+    };
+    native_x_renderer::SetShaderCache(std::move(source));
+  }
+#endif
   recomp_ui::GameMenu* menu_ = nullptr;  // owned by the ImGui drawer
 };

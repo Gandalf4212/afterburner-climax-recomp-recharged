@@ -7,6 +7,7 @@ name: Build Windows
 # The ReXGlue SDK is built from source at REXGLUE_SDK_REF with this repo's patches:
 #   patches/rexglue-sdk/*.patch  -> git am in the SDK tree (NativeXRenderer's SDK changes, XMA skip, glue name fix)
 #   patches/ffmpeg/*.patch       -> git apply in the SDK's thirdparty/FFmpeg (XMA skip metadata)
+#   patches/native_x_renderer/*.patch -> git am in thirdparty/native_x_renderer (shader cache, D130)
 # See docs/building.md.
 on:
   push:
@@ -77,6 +78,15 @@ jobs:
           }
           git status --short
           Pop-Location
+
+      - name: Apply NativeXRenderer patches
+        shell: pwsh
+        working-directory: thirdparty/native_x_renderer
+        run: |
+          # patches/native_x_renderer: Mad Riders' scene size + shader cache (D127-D129) rebased onto bf965e9, and D130.
+          git -c user.name=ci -c user.email=ci@local am --3way (Get-ChildItem ..\..\patches\native_x_renderer\*.patch | Sort-Object Name | ForEach-Object FullName)
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git log --oneline -8
 
       # ---------- Game ----------
       - name: Compiler cache

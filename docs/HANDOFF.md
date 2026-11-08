@@ -1,6 +1,6 @@
-# Handoff (2026-11-08)
+# Handoff (2026-11-08, session 2)
 
-State of branch `nativex` at the end of session 1, and what to do next. Update this file at the end of each session.
+State of branch `nativex`, and what to do next. Update this file at the end of each session.
 
 ## Done
 | Commit | What |
@@ -8,7 +8,9 @@ State of branch `nativex` at the end of session 1, and what to do next. Update t
 | 07102ea | ReXGlue v0.10.1 from source (was v0.9.0-p23 prebuilt); World release only (Original 1.0.0.0 exe and `world/` removed); code regenerated (0 errors, the same 24 unresolved-branch traps as before); XMA start/end skip ported (SDK patch 0010 + FFmpeg patch); SDK glue-name fix (0011); exit watchdog; CI. **CI passed (9.5 min).** |
 | 1940c8f | F1 menu: Mad Riders layout + Afterburner's flight keys/rebinding page; Renderer row (`recomp_renderer`: xenia default / nativex); render res & VSync follow the renderer; AA / New shaders rows (NativeX only); Log file row; `config_file.h` writes all settings under the ASCII banner. |
 | 099e5c7 | `docs/native-x-renderer.md`: D3D map of XDK 9328. |
-| 9f958c5 | NativeXRenderer submodule (bf965e9) built in; `src/native_x_renderer_abc.cpp` hooks + profile; CI build was running at handoff. |
+| 9f958c5 | NativeXRenderer submodule (bf965e9) built in; `src/native_x_renderer_abc.cpp` hooks + profile. CI passed (11 min). Owner tested: Xenia boots, audio good, quit clean; verify works (F10 and `--native_x_renderer_verify_at`). |
+| 08bc29d | First verify report read (docs/native-x-renderer.md): layout right, 8.1 % of draws fully match. |
+| (session 2) | NativeX patches `patches/native_x_renderer/0001-0006`, applied by CI on bf965e9: Mad Riders' scene size, shader cache, scene wait budget, compressed records (renumbered D127-D129: upstream used D115-D117), and D130: `BeginShaderConstantF4` (`8224A530`, game-written constants) + `RunCommandBuffer` (`822496E0`) tracked. Shader cache wired in (`src/shader_scan.*`: FArC `media\x360\shader_hlsl.farc`, 96 unique shaders; `shaders.cache` next to the exe; game thread held while it is prepared; New shaders default 8 ms). Name shown: "After Burner Climax Recomp (Recharged)". |
 
 ## Key files
 - `src/after_burner_climax_app.h`: app hooks (paths, xex check, renderer switch `ApplyRenderer`, log switch, NativeX `Initialize`, menu, exit watchdog arming).
@@ -19,6 +21,10 @@ State of branch `nativex` at the end of session 1, and what to do next. Update t
 - `.github/workflows/build-windows.yml`: artifact `after_burner_climax-win-amd64`.
 
 ## Waiting on the owner (tests on Windows)
+0. New build: `--recomp_log=true --native_x_renderer_verify=true --native_x_renderer_verify_at=2400`, fly a
+   stage: the report should show far fewer VS/PS constant mismatches. Then F1 > Renderer = NativeX: first start
+   shows the shader cache screen ("Finding the game's shaders", 96), later starts only load. Log lines "Shader scan".
+(Done in session 2:)
 1. Xenia path (default): boots, plays, audio OK (XMA skip port: listen for clicks on looping sounds), quitting
    ends the process. Log: "Exit watchdog armed", then "Title terminated; hard-exiting process." or
    "Exit watchdog: shutdown did not finish" (tells which stage stalls).
@@ -27,7 +33,12 @@ State of branch `nativex` at the end of session 1, and what to do next. Update t
 3. Optional: F1 > Renderer = NativeX, restart: what draws.
 
 ## Next steps
-1. Read the verify report: fix wrong offsets in the profile, add what it says is missing. Not mapped yet: VS/PS
+0. Verify again with D130. Still open from the report: draws inside recorded command buffers (RunCommandBuffer) are
+   tracked but not drawn by the NativeX renderer; PS shadow at +6016 held non-floats (check after D130).
+   Shader cache: vertex shader variants (the D3D patches fetches per vertex declaration) and pipelines are only
+   compiled when first drawn, then cached; the owner wants everything compiled on the first start: needs the
+   game's vertex declarations to patch the shipped vertex shaders ahead (NativeX docs/shader-cache.md, section 6).
+1. (Earlier) Read the verify report: fix wrong offsets in the profile, add what it says is missing. Not mapped yet: VS/PS
    constant setters (no plain function writes `+1920 + 16*start`; likely inlined in the engine: scan for
    `ld/or/std` on device `+0`/`+8`), Begin/EndVertices (draws touch `+13436/+13440`), buffer Lock/Unlock,
    TextureUnlock, NewSegment, SetShaderGPRAllocation, occlusion queries (EVENT_WRITE_ZPD in engine code
@@ -35,7 +46,7 @@ State of branch `nativex` at the end of session 1, and what to do next. Update t
    layout (assumed 7978's). Candidates to confirm: SetViewport `8223F300`, BeginTiling `8224DC78`,
    EndTiling `82248DB0`. Method: NativeX `docs/integrating-a-game.md`; Mad Riders' table (`docs/reference/mad-riders/native-x-renderer.md`) is a good model.
 2. When NativeX draws correctly: make it the default renderer.
-3. Shader cache (`patches/native_x_renderer-pending/0001-0004`, models in `docs/reference/mad-riders/`): tested against
+3. (Done in session 2, see above.) Shader cache (was `patches/native_x_renderer-pending/0001-0004`, models in `docs/reference/mad-riders/`): tested against
    bf965e9, none apply as-is. 0001 (scene size/AA) overlaps upstream D126 (merge by hand); 0002 (cache core,
    ~2500 lines) only 1 code hunk + docs; 0003/0004 after those. Rebase on a test branch: apply on 5aa5a05,
    `git rebase bf965e9`. A shader scanner for this game's data format must be written (Mad Riders' reads

@@ -10,6 +10,6 @@ this repo no longer needs that one. **Not compiled.** Use them as models:
 | `native_x_renderer_mad_riders.cpp` | Hook-file model, incl. DrawIndexedVertices split for draws over 65532 indices and Swap reported as Present. |
 | `native-x-renderer.md` | Mad Riders' NativeX notes (entry-point table, verify results, scene size/AA, shader cache). |
 
-The four NativeXRenderer patches are in `patches/native_x_renderer-pending/` (written for NativeX 5aa5a05; not
+The four NativeXRenderer patches are in `patches/native_x_renderer/` (written for NativeX 5aa5a05; not
 applied by CI). See docs/HANDOFF.md, next step 3, for the rebase onto bf965e9. The shader cache's own guide is
 `docs/shader-cache.md` inside patch 0002/0004.

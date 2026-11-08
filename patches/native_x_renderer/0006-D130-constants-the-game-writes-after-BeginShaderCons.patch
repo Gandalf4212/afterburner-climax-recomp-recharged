@@ -1,0 +1,180 @@
+From 7cc39ea603f048859c515e4aeb45b6d1e62dc5c2 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Sun, 8 Nov 2026 10:05:16 -0500
+Subject: [PATCH 6/6] D130: constants the game writes after
+ BeginShaderConstantF4, and RunCommandBuffer tracked
+
+---
+ docs/decisions.md                   | 15 +++++++++++++++
+ include/native_x_renderer/calls.inc |  6 ++++++
+ src/internal.h                      |  3 +++
+ src/native_x_renderer.cpp           |  4 ++++
+ src/state.cpp                       | 27 +++++++++++++++++++++++++++
+ src/state.h                         | 10 ++++++++++
+ 6 files changed, 65 insertions(+)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index f6aae9c..d4cf47b 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4399,3 +4399,18 @@ the game's D3D writes into each vertex fetch, keyed by the shipped fetch instruc
+ shipped vertex shaders: 21 of 112 variants of a Xenia dump predicted (leave one out). The fetch's meaning is in the
+ shader object's vertex element table (usage and index per fetch), not in the instruction; a key by usage would be
+ the next attempt.
++
++## D130 — Constants the game writes after BeginShaderConstantF4, and RunCommandBuffer (2026-11-08, After Burner Climax)
++
++**What:** two new calls. `BeginShaderConstantF4` (flag `kFilledAfter`) reserves a SET_CONSTANT packet and returns a
++pointer the game fills afterwards (its End is inlined); the tracker keeps the call's range at Leave and reads it before
++the next device call (`StateTracker::TakeFilledPackets`), as non-draw constant writes that persist. `RunCommandBuffer`
++is tracked as a device call: its flush, and the recorded buffers its INDIRECT_BUFFER packets point to (followed one
++level by `ScanPackets`).
++
++**Why:** After Burner Climax (XDK 9328), first verify run: render state, fetch, programs, bool/loop all matched, but
++only 8 of 99 draws fully matched: the engine writes most float constants itself (12 sites through
++`8224A530`), bypassing the device's shadow, and 576 draw packets came from recorded command buffers (`822496E0`).
++
++**Not yet:** the draws inside a recorded command buffer are not drawn by the renderer (the call is not a draw); the
++tracker's state after it is right.
+diff --git a/include/native_x_renderer/calls.inc b/include/native_x_renderer/calls.inc
+index dfa22ae..d478e8c 100644
+--- a/include/native_x_renderer/calls.inc
++++ b/include/native_x_renderer/calls.inc
+@@ -48,6 +48,9 @@ NATIVE_X_RENDERER_CALL(SetIndices, "dev buffer", 0)
+ NATIVE_X_RENDERER_CALL(SetTexture, "dev sampler texture", 0)
+ NATIVE_X_RENDERER_CALL(SetVertexShaderConstantF, "dev start data count", 0)
+ NATIVE_X_RENDERER_CALL(SetPixelShaderConstantF, "dev start data count", 0)
++// BeginShaderConstantF4 writes a SET_CONSTANT header and returns a pointer into the command buffer that the game
++// fills with the constants afterwards (End is inlined, D130): its packets are read before the next device call.
++NATIVE_X_RENDERER_CALL(BeginShaderConstantF4, "dev pixelShader start vec4Count", kFilledAfter)
+ 
+ // Resources
+ NATIVE_X_RENDERER_CALL(VertexBufferLock, "buffer offset size data flags", 0)
+@@ -59,6 +62,9 @@ NATIVE_X_RENDERER_CALL(FlushCpuRange, "start end", 0)
+ 
+ // Command buffer, queries, frame
+ NATIVE_X_RENDERER_CALL(KickSegment, "dev", 0)
++// Runs a command buffer the game recorded: the flush of the state it inherits, then INDIRECT_BUFFER packets that the
++// tracker follows (D130).
++NATIVE_X_RENDERER_CALL(RunCommandBuffer, "dev commandBuffer predicationSelect", 0)
+ // Moves the write pointer to a new command buffer segment. KickSegment calls it, and so may the
+ // library's reservation, when what it reserves does not fit even after a kick.
+ NATIVE_X_RENDERER_CALL(NewSegment, "dev dwords", 0)
+diff --git a/src/internal.h b/src/internal.h
+index e1f2a69..50478e2 100644
+--- a/src/internal.h
++++ b/src/internal.h
+@@ -26,12 +26,15 @@ namespace native_x_renderer::internal {
+ // kInlineBegin, kInlineEnd: an inline draw the game fills itself. The begin call (BeginVertices) writes the
+ // flush and the draw packet but leaves the write pointer where it was; the end call (EndVertices) moves it
+ // past them, so the end is the draw, with the dirty masks the begin's flush saw.
++// kFilledAfter: the call reserves packets that the game fills after it returns (BeginShaderConstantF4, D130): the
++// state tracker reads them before the next device call (TakeFilledPackets).
+ enum CallFlags : uint32_t {
+   kDraw = 1u << 0,
+   kFrameEnd = 1u << 1,
+   kPackets = 1u << 2,
+   kInlineBegin = 1u << 3,
+   kInlineEnd = 1u << 4,
++  kFilledAfter = 1u << 5,
+ };
+ 
+ struct CallInfo {
+diff --git a/src/native_x_renderer.cpp b/src/native_x_renderer.cpp
+index 125fece..e16de39 100644
+--- a/src/native_x_renderer.cpp
++++ b/src/native_x_renderer.cpp
+@@ -151,6 +151,10 @@ void Enter(Call call, PPCContext& ctx, uint8_t* base) {
+     // tracked is handed on as an EndVertices before the next device call, if the game committed it.
+     const internal::CallInfo& info = internal::Info(call);
+     if (info.device || (info.flags & internal::kPackets)) {
++      // D130: the constants the game wrote after its last BeginShaderConstantF4.
++      if (const TrackedCall* filled = g_tracker->TakeFilledPackets(base)) {
++        if (g_observer) observer::OnLeave(*filled, *g_tracker);
++      }
+       if (const TrackedCall* tracked = g_tracker->TakeCommittedInlineDraw(base)) {
+         uint64_t r3 = ctx.r3.u64;
+         ctx.r3.u64 = tracked->device;
+diff --git a/src/state.cpp b/src/state.cpp
+index ab3e759..3547df5 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -266,6 +266,7 @@ void StateTracker::Reset() {
+   record_.Clear();
+   applied_to_ = 0;
+   inline_begin_ = {};
++  filled_ = {};
+ }
+ 
+ void StateTracker::Enter(Call call, uint32_t device, const uint8_t* base, bool nested) {
+@@ -363,6 +364,27 @@ const TrackedCall* StateTracker::TakeCommittedInlineDraw(const uint8_t* base) {
+   return &last_;
+ }
+ 
++const TrackedCall* StateTracker::TakeFilledPackets(const uint8_t* base) {
++  if (!filled_.pending) return nullptr;
++  filled_.pending = false;
++  const Pending& p = filled_.p;
++  uint32_t end = filled_.end;
++  scan_.Clear();
++  if (end >= p.scan_from && end - p.scan_from < 0x400000) {
++    ScanPackets(base, p.scan_from, end, scan_, 0, false, false);
++  } else {
++    scan_.complete = false;
++  }
++  Gather(p, filled_.call, false, base);
++  last_.call = filled_.call;
++  last_.draw = false;
++  last_.device = p.device;
++  last_.begin = GpuAddress(p.begin);
++  last_.end = GpuAddress(end);
++  last_.scan = &scan_;
++  return &last_;
++}
++
+ const TrackedCall* StateTracker::Leave(Call call, const uint8_t* base, bool nested) {
+   Pending p = std::move(stack_.back());
+   stack_.pop_back();
+@@ -377,6 +399,11 @@ const TrackedCall* StateTracker::Leave(Call call, const uint8_t* base, bool nest
+ 
+   // The packets of the call's last segment (the earlier ones were read when the segments ended).
+   uint32_t end = Load32(base, p.device + d.command_buffer_write) + 4;
++  if (Info(call).flags & kFilledAfter) {
++    // D130: the game fills them after this returns; read before the next device call.
++    filled_ = {true, call, p, end};
++    return nullptr;
++  }
+   bool draw = p.draw;
+   bool held = false;
+   if ((Info(call).flags & kInlineBegin) && d.inline_draw_end != kUnknown && inline_begin_.pending) {
+diff --git a/src/state.h b/src/state.h
+index 946c148..989406b 100644
+--- a/src/state.h
++++ b/src/state.h
+@@ -142,6 +142,9 @@ class StateTracker {
+   // end of the begin's packets); else nullptr. Called before the next device call, which decides: a draw not
+   // committed by then is dropped.
+   const TrackedCall* TakeCommittedInlineDraw(const uint8_t* base);
++  // The last kFilledAfter call (BeginShaderConstantF4, D130), whose Leave returned nullptr, read now that the game
++  // has filled its packets; nullptr when none waits. Called before the next device call.
++  const TrackedCall* TakeFilledPackets(const uint8_t* base);
+ 
+   // The GPU state after the last finished call (in a draw's Leave, the state that draw runs with), with
+   // set_apply_locally on.
+@@ -250,6 +253,13 @@ class StateTracker {
+     uint32_t device = 0;
+     uint32_t end = 0;
+   } inline_begin_;
++  // The last kFilledAfter call, read by TakeFilledPackets (D130).
++  struct Filled {
++    bool pending = false;
++    Call call{};
++    Pending p;
++    uint32_t end = 0;
++  } filled_;
+   PacketScan scan_;
+   TrackedCall last_;
+ };
+-- 
+2.43.0
+

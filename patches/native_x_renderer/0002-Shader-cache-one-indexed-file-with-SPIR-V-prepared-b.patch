@@ -1,15 +1,15 @@
-From 2e663685ccb61b10afcf78c02d50613197abc997 Mon Sep 17 00:00:00 2001
+From 9ae5093d3bf5fb574da89aaf6ec3e723122118df Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 7 Nov 2026 12:00:16 -0500
-Subject: [PATCH] Shader cache: one indexed file with SPIR-V, prepared before
- the game draws (D115)
+Subject: [PATCH 2/6] Shader cache: one indexed file with SPIR-V, prepared
+ before the game draws (D115)
 
 Adds shader_sources.h (finding a game's XDK shader objects, whole or split), a ready-made
 ShaderCacheScreen ImGui dialog, and docs/shader-cache.md (how to add it to a game, the format).
 ---
  CMakeLists.txt                                |   2 +
  docs/architecture.md                          |   2 +-
- docs/decisions.md                             |  35 ++
+ docs/decisions.md                             |  34 ++
  docs/integrating-a-game.md                    |   8 +
  docs/shader-cache.md                          | 198 ++++++++
  include/native_x_renderer/native_x_renderer.h |  55 +++
@@ -26,7 +26,7 @@ ShaderCacheScreen ImGui dialog, and docs/shader-cache.md (how to add it to a gam
  src/shaders.h                                 |  52 ++-
  src/storage.cpp                               | 343 ++++++++++----
  src/storage.h                                 | 116 +++--
- 19 files changed, 1715 insertions(+), 282 deletions(-)
+ 19 files changed, 1714 insertions(+), 282 deletions(-)
  create mode 100644 docs/shader-cache.md
  create mode 100644 include/native_x_renderer/shader_cache_screen.h
  create mode 100644 include/native_x_renderer/shader_sources.h
@@ -34,10 +34,10 @@ ShaderCacheScreen ImGui dialog, and docs/shader-cache.md (how to add it to a gam
  create mode 100644 src/shader_sources.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 4c627c2..3f9c57e 100644
+index 836b53d..64384c2 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -141,6 +141,8 @@ add_library(native_x_renderer STATIC
+@@ -146,6 +146,8 @@ add_library(native_x_renderer STATIC
      src/guest_textures.cpp
      src/queries.cpp
      src/storage.cpp
@@ -47,7 +47,7 @@ index 4c627c2..3f9c57e 100644
  )
  add_library(native_x_renderer::native_x_renderer ALIAS native_x_renderer)
 diff --git a/docs/architecture.md b/docs/architecture.md
-index 351b57b..e6dd953 100644
+index c321055..b0263fb 100644
 --- a/docs/architecture.md
 +++ b/docs/architecture.md
 @@ -171,7 +171,7 @@ All of these live in `native_x_renderer/` and contain no game-specific code.
@@ -60,14 +60,13 @@ index 351b57b..e6dd953 100644
  | Primitive processing | Host primitive and vertex shader types, index conversions. | SDK `PrimitiveProcessor` (D17) |
  | Texture cache | Host textures from fetch constants: address, format, size, tiling, mips, loaded by the SDK's load shaders as DiligentCore compute pipelines. Block formats (DXT1 to DXN) stay compressed on the host when their size is a multiple of the block (D33). Invalidated when the CPU writes their pages (the mirror's page watches); an outdated texture whose guest data hashes the same is not loaded again. Each texture reports its host size, mips included, to the SDK's memory limits. | SDK `TextureCache` on DiligentCore textures (D23) |
 diff --git a/docs/decisions.md b/docs/decisions.md
-index bd359cb..e57a1c7 100644
+index 15a6da2..9612261 100644
 --- a/docs/decisions.md
 +++ b/docs/decisions.md
-@@ -3865,3 +3865,38 @@ guest) keeps D69's blend.
+@@ -4329,3 +4329,37 @@ the ten games, and each one's first screens cold on a new window size: no errors
+ (`recomp-tools/runs/2026-11-07_d126_b`).
  
- **Revisit if:** a game draws alpha to coverage at 1x with a pattern that shows (thin geometry dotted at the render
- scale): `blend` brings D69 back for it.
-+
+ **Revisit if:** something is missing for good after a first run in a game: a pass drawn once into a steady target.
 +## D115 — One indexed shader cache file, prepared before the game draws (2026-11-07, Mad Riders)
 +
 +**Decision:** the pipeline storage (D42) and the driver's pipeline cache (D45) become one file, by default
@@ -103,7 +102,7 @@ index bd359cb..e57a1c7 100644
 +translations are guesses (no MSAA centroids, no PsParamGen); what draws ask that was not guessed is translated as
 +before and kept.
 diff --git a/docs/integrating-a-game.md b/docs/integrating-a-game.md
-index bd11bb4..0f88752 100644
+index 9512e37..7c46419 100644
 --- a/docs/integrating-a-game.md
 +++ b/docs/integrating-a-game.md
 @@ -69,6 +69,14 @@ Its offset, and the order of the dirty masks, change between XDK versions: read
@@ -326,11 +325,11 @@ index 0000000..3bdbb47
 +  (shader, declaration), so a game that can list its declarations could patch the shipped microcode itself and
 +  hand over the variants as `GameShader`s.
 diff --git a/include/native_x_renderer/native_x_renderer.h b/include/native_x_renderer/native_x_renderer.h
-index 9ed8e48..deb734f 100644
+index efcb624..4549c79 100644
 --- a/include/native_x_renderer/native_x_renderer.h
 +++ b/include/native_x_renderer/native_x_renderer.h
-@@ -13,6 +13,8 @@
- #include <array>
+@@ -14,6 +14,8 @@
+ #include <cstddef>
  #include <cstdint>
  #include <filesystem>
 +#include <functional>
@@ -338,7 +337,7 @@ index 9ed8e48..deb734f 100644
  
  namespace rex::system {
  class IGraphicsSystem;
-@@ -178,6 +180,59 @@ struct Profile {
+@@ -210,6 +212,59 @@ struct Profile {
  void Initialize(const Profile& profile, rex::system::IGraphicsSystem* graphics, rex::ui::Window* window,
                  const std::filesystem::path& cache_root = {});
  
@@ -514,7 +513,7 @@ index 0000000..b797830
 +
 +}  // namespace native_x_renderer::shader_sources
 diff --git a/src/draw.cpp b/src/draw.cpp
-index 8184f2f..863d500 100644
+index a094f8c..fe9fde1 100644
 --- a/src/draw.cpp
 +++ b/src/draw.cpp
 @@ -29,6 +29,7 @@
@@ -525,8 +524,8 @@ index 8184f2f..863d500 100644
  #include <string>
  #include <system_error>
  #include <thread>
-@@ -230,15 +231,31 @@ struct DrawPath::MotionDraw {
-   uint32_t vertex_count;
+@@ -241,15 +242,31 @@ struct DrawPath::MotionDraw {
+   Mat4d reprojection;
  };
  
 +namespace {
@@ -558,7 +557,7 @@ index 8184f2f..863d500 100644
    device_ = &device;
    registers_ = &registers;
    scale_ = scale;
-@@ -284,7 +301,7 @@ bool DrawPath::Initialize(Device& device, rg::RegisterFile& registers, rex::memo
+@@ -295,7 +312,7 @@ bool DrawPath::Initialize(Device& device, rg::RegisterFile& registers, rex::memo
    buffers.motion_constants = motion_constants_buffer_;
    pipelines_ = std::make_unique<PipelineCache>();
    pipelines_->Initialize(render_device, buffers);
@@ -567,7 +566,7 @@ index 8184f2f..863d500 100644
    const std::string& alpha_to_coverage = REXCVAR_GET(native_x_renderer_alpha_to_coverage);
    alpha_to_coverage_blend_.msaa = alpha_to_coverage != "dither";
    alpha_to_coverage_blend_.one = alpha_to_coverage == "blend";
-@@ -296,17 +313,44 @@ bool DrawPath::Initialize(Device& device, rg::RegisterFile& registers, rex::memo
+@@ -307,17 +324,44 @@ bool DrawPath::Initialize(Device& device, rg::RegisterFile& registers, rex::memo
    return true;
  }
  
@@ -619,7 +618,7 @@ index 8184f2f..863d500 100644
    PipelineStateCacheCreateInfo cache_info;
    cache_info.Desc.Name = "NativeXRenderer pipeline cache";
    cache_info.Desc.Mode = PSO_CACHE_MODE_LOAD_STORE;
-@@ -314,114 +358,302 @@ void DrawPath::OpenStorage(const std::filesystem::path& storage) {
+@@ -325,114 +369,302 @@ void DrawPath::OpenStorage(const std::filesystem::path& storage) {
    cache_info.CacheDataSize = uint32_t(blob.size());
    render_device->CreatePipelineStateCache(cache_info, &pipeline_cache_);
    if (pipeline_cache_) pipelines_->SetCache(pipeline_cache_);
@@ -1008,7 +1007,7 @@ index 8184f2f..863d500 100644
      } else {
        save_failed_ = true;
      }
-@@ -1477,16 +1709,24 @@ void DrawPath::EndFrame() {
+@@ -1554,16 +1786,24 @@ void DrawPath::EndFrame() {
    // cache saved, on a thread of its own (D45), once nothing new was compiled for 10 s (at 60 FPS), and at
    // most every 5 minutes (D52): new areas bring pipelines every few seconds, and each save writes tens of
    // MB. What is not saved yet is in the records, compiled again at the next start.
@@ -1037,7 +1036,7 @@ index 8184f2f..863d500 100644
    }
    if (primitives_) primitives_->EndFrame();
 diff --git a/src/draw.h b/src/draw.h
-index f3bd20f..75c1e56 100644
+index 749d2dc..dbaebc0 100644
 --- a/src/draw.h
 +++ b/src/draw.h
 @@ -15,11 +15,13 @@
@@ -1054,15 +1053,15 @@ index f3bd20f..75c1e56 100644
  #include <memory>
  #include <span>
  #include <thread>
-@@ -31,6 +33,7 @@
- #include "RefCntAutoPtr.hpp"
+@@ -32,6 +34,7 @@
  #include "TextureView.h"
+ #include "camera_vote.h"
  #include "motion.h"
 +#include "storage.h"
  #include "pipelines.h"
  #include "scale.h"
  #include "state.h"
-@@ -56,6 +59,10 @@ class ShaderCache;
+@@ -57,6 +60,10 @@ class ShaderCache;
  class Textures;
  struct HostTarget;
  
@@ -1073,7 +1072,7 @@ index f3bd20f..75c1e56 100644
  class DrawPath {
   public:
    DrawPath();
-@@ -65,7 +72,13 @@ class DrawPath {
+@@ -66,7 +73,13 @@ class DrawPath {
    // `storage`: where the shaders and pipelines are kept between runs, a path without extension (D42);
    // empty for none.
    bool Initialize(Device& device, rex::graphics::RegisterFile& registers, rex::memory::Memory& memory,
@@ -1088,7 +1087,7 @@ index f3bd20f..75c1e56 100644
  
    // Guest memory a draw reads that the game may have reused since the draw was captured (D71): an inline draw's
    // vertices and indices, in the command buffer. `data` holds them as they were.
-@@ -186,10 +199,14 @@ class DrawPath {
+@@ -218,10 +231,14 @@ class DrawPath {
    rex::graphics::SpirvShader* FindShader(rex::graphics::xenos::ShaderType type, const StateTracker::Program& program,
                                           bool* new_failure);
    Diligent::IShader* FindHostShader(rex::graphics::SpirvShader& shader, uint64_t modification, bool& pending);
@@ -1107,7 +1106,7 @@ index f3bd20f..75c1e56 100644
    void FillSystemConstants(const DrawContext& draw);
    // Keeps a draw that moved for DrawObjectMotion (D48).
    struct MotionDraw;
-@@ -226,9 +243,28 @@ class DrawPath {
+@@ -259,9 +276,28 @@ class DrawPath {
    };
    std::vector<Stored> stored_;  // stored pipelines not created yet
    uint32_t stored_total_ = 0;
@@ -1185,10 +1184,10 @@ index 67f8548..125fece 100644
  
  void SetGameAspectBox(bool on) {
 diff --git a/src/renderer.cpp b/src/renderer.cpp
-index 77ce34d..a6172c8 100644
+index 2972f65..32bf0cc 100644
 --- a/src/renderer.cpp
 +++ b/src/renderer.cpp
-@@ -44,7 +44,10 @@
+@@ -47,7 +47,10 @@
  #include <algorithm>
  #include <array>
  #include <bit>
@@ -1199,7 +1198,7 @@ index 77ce34d..a6172c8 100644
  #include <cmath>
  #include <cstdlib>
  #include <cstring>
-@@ -155,6 +158,9 @@ GuestSurface g_scene_color_surface;
+@@ -220,6 +223,9 @@ GuestSurface g_scene_color_surface;
  // The reduced targets drawn or cleared in this view (D49), with their surfaces.
  std::vector<std::pair<GuestSurface, HostTarget*>> g_reduced_used;
  std::filesystem::path g_cache_root;  // the runtime's cache directory (D42)
@@ -1209,7 +1208,7 @@ index 77ce34d..a6172c8 100644
  std::unique_ptr<DrawPath> g_draw;  // created on the first draw (it needs the tracker's register file)
  bool g_draw_failed = false;
  bool g_tiling = false;  // between BeginTiling and EndTiling
-@@ -352,10 +358,12 @@ GuestSurface Tiled(GuestSurface s) {
+@@ -429,10 +435,12 @@ GuestSurface Tiled(GuestSurface s) {
  
  float GuestFloat(const uint8_t* base, uint32_t address) { return LoadFloat(base, address); }
  
@@ -1225,7 +1224,7 @@ index 77ce34d..a6172c8 100644
  }
  
  // The host target a draw, a clear or a resolve uses for a guest surface: in the main 3D view, while DLSS
-@@ -492,23 +500,56 @@ void CarryColorIntoDepth(const GuestSurface& surface, HostTarget* depth) {
+@@ -569,23 +577,56 @@ void CarryColorIntoDepth(const GuestSurface& surface, HostTarget* depth) {
    }
  }
  
@@ -1297,7 +1296,7 @@ index 77ce34d..a6172c8 100644
    // Profile::scene_resolve_before_output: the scene's copy is antialiased before it is drawn into the frame.
    if (g_pending_scene_copy && g_aa.mode() != Antialiasing::Mode::kOff) {
      const GuestSurface first = Tiled(c.surfaces[0] ? c.surfaces[0] : c.surfaces[4]);
-@@ -1563,6 +1604,17 @@ void OnFrameEnd(uint32_t frame) {
+@@ -1935,6 +1976,17 @@ void OnFrameEnd(uint32_t frame) {
    g_captured = 0;
  }
  
@@ -1315,7 +1314,7 @@ index 77ce34d..a6172c8 100644
  double AspectFactor() { return g_aspect_factor; }
  
  void SetGameAspectBox(bool on) {
-@@ -1766,6 +1818,7 @@ void ExecuteFrameEnd(const Command& c) {
+@@ -2164,6 +2216,7 @@ void ExecuteFrameEnd(const Command& c) {
  }
  
  void Execute(Command& c) {

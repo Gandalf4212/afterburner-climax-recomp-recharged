@@ -30,6 +30,11 @@ NATIVE_X_RENDERER_HOOK(822437C8, SetVertexDeclaration)  // +11992
 NATIVE_X_RENDERER_HOOK(8223EB70, SetStreamSource)       // addi r11,r29,3159: +12636 + 4*stream
 NATIVE_X_RENDERER_HOOK(8223EC90, SetIndices)            // +12612
 NATIVE_X_RENDERER_HOOK(8224C410, SetTexture)            // addi r11,r4,3180: +12720 + 4*index
+// Constants the engine writes itself: reserves 4*count+5 dwords, SET_CONSTANT header, returns the data pointer
+// (12 engine sites, e.g. 8216D824: VS start 108, 8 vec4). The shadow at +1920/+6016 is bypassed (first verify run).
+NATIVE_X_RENDERER_HOOK(8224A530, BeginShaderConstantF4)
+// Recorded command buffers: flush of the inherited state, then INDIRECT_BUFFER per segment (cmdbuf+116); 1 site.
+NATIVE_X_RENDERER_HOOK(822496E0, RunCommandBuffer)
 // Memory, command buffer
 NATIVE_X_RENDERER_HOOK(82255350, FlushCpuRange)         // dcbf loop, 18 library callers
 NATIVE_X_RENDERER_HOOK(822544B8, KickSegment)           // 112 library callers; write-back +10896, fence +10908

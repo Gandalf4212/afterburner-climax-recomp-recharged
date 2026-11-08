@@ -1,4 +1,4 @@
-After Burner Climax Recharged - native Windows build (ReXGlue static recompilation)
+After Burner Climax Recomp (Recharged) - native Windows build (ReXGlue static recompilation)
 https://github.com/Gandalf4212/afterburner-climax-recomp-recharged
 
 Game files are NOT included. You need your own After Burner Climax XBLA package

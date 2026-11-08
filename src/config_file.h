@@ -33,7 +33,7 @@ _________ .__  .__                        __________
  \______  /____/__|__|_|  (____  /__/\_ \  |____|_  /\___  >\___  >____/|__|_|  /   __/
         \/              \/     \/      \/         \/     \/     \/            \/|__|
 
-After Burner Climax Recharged settings. Changed by the F1 menu; safe to edit by
+After Burner Climax Recomp (Recharged) settings. Changed by the F1 menu; safe to edit by
 hand while the game is closed. Command-line options (--name=value) override it.)";
 
 struct ConfigItem {

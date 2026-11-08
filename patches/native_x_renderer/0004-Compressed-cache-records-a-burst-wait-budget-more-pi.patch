@@ -1,8 +1,8 @@
-From fd4ab924af1fc13e778b7aa0e148b81c49ad333a Mon Sep 17 00:00:00 2001
+From b85f1e5fbcb8dd1a2eb5d3d46e92f8a306ed2a20 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 7 Nov 2026 14:55:26 -0500
-Subject: [PATCH] Compressed cache records, a burst wait budget, more pipeline
- threads (D117)
+Subject: [PATCH 4/6] Compressed cache records, a burst wait budget, more
+ pipeline threads (D117)
 
 ---
  CMakeLists.txt       |   1 +
@@ -22,10 +22,10 @@ Subject: [PATCH] Compressed cache records, a burst wait budget, more pipeline
  create mode 100644 src/lz.h
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 3f9c57e..84c2e2b 100644
+index 64384c2..8e2707a 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -141,6 +141,7 @@ add_library(native_x_renderer STATIC
+@@ -146,6 +146,7 @@ add_library(native_x_renderer STATIC
      src/guest_textures.cpp
      src/queries.cpp
      src/storage.cpp
@@ -34,10 +34,10 @@ index 3f9c57e..84c2e2b 100644
      src/shader_cache_screen.cpp
      src/draw.cpp
 diff --git a/docs/decisions.md b/docs/decisions.md
-index 8171f78..5eb5328 100644
+index 75327fd..5dc4dd4 100644
 --- a/docs/decisions.md
 +++ b/docs/decisions.md
-@@ -3916,3 +3916,23 @@ without a budget (D101 on every draw) made each new pipeline a visible stall (Ma
+@@ -4379,3 +4379,23 @@ without a budget (D101 on every draw) made each new pipeline a visible stall (Ma
  
  **Revisit if:** a game's compiles are mostly longer than a frame: the budget then only delays the frame without
  saving the draw.
@@ -95,7 +95,7 @@ index 3bdbb47..44d1d5f 100644
  - A new kind of record: add a `Kind`, write it with `AddLocked` (journaled) or like `SetDriverCache` (only with the
    whole file), read it in `Open`'s final loop.
 diff --git a/src/device.cpp b/src/device.cpp
-index 3970ac9..df178f3 100644
+index 038d8fa..9180cc7 100644
 --- a/src/device.cpp
 +++ b/src/device.cpp
 @@ -4,6 +4,9 @@
@@ -108,10 +108,10 @@ index 3970ac9..df178f3 100644
  #include <rex/cvar.h>
  #include <rex/logging.h>
  
-@@ -87,7 +90,12 @@ bool Device::Create(void* native_window) {
-   // Pipelines compile in DiligentCore's thread pool (D28). A few threads: new pipelines come in bursts
+@@ -88,7 +91,12 @@ bool Device::Create(void* native_window, bool half_precision) {
    // (a level, a new effect), and the game's own threads need the CPU.
    create_info.Features.AsyncShaderCompilation = DEVICE_FEATURE_STATE_OPTIONAL;
+   if (half_precision) create_info.Features.ShaderFloat16 = DEVICE_FEATURE_STATE_OPTIONAL;
 -  create_info.NumAsyncShaderCompilationThreads = 4;
 +  // D117: pipelines compile on these (D28); more on CPUs that have the cores, so a burst of new pipelines (a race's
 +  // start) is through sooner. They sleep when there is nothing to compile.
@@ -123,36 +123,36 @@ index 3970ac9..df178f3 100644
    // 1.4 KB, plus the float constants its shaders use), with several frames in flight.
    create_info.DynamicHeapSize = 256 << 20;
 diff --git a/src/draw.cpp b/src/draw.cpp
-index cc359ff..01cd52c 100644
+index 9090c23..9ea77aa 100644
 --- a/src/draw.cpp
 +++ b/src/draw.cpp
-@@ -122,6 +122,9 @@ uint8_t Stencil(xenos::StencilOp op) { return uint8_t(uint32_t(op) + 1); }
- // The longest a draw into an offscreen target waits for its translations and pipeline before it is skipped after all
+@@ -123,6 +123,9 @@ uint8_t Stencil(xenos::StencilOp op) { return uint8_t(uint32_t(op) + 1); }
  // (D101): a pipeline the driver has never seen takes up to a few hundred milliseconds.
  constexpr std::chrono::milliseconds kPipelineWaitLimit{3000};
+ constexpr double kLongPipelineWaitMs = 50.0;
 +// D117: a frame with this many draws skipped for compiles lets the next one wait this long (scene draws, D116).
 +constexpr uint32_t kBurstSkips = 8;
 +constexpr double kBurstWaitMs = 33.0;
  
  constexpr uint32_t kBoolLoopConstantsSize = (8 + 32) * 4;
  constexpr uint32_t kFetchConstantsSize = 32 * 6 * 4;
-@@ -943,6 +946,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
-   }
+@@ -956,6 +959,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
    if (translating) {
      ++stats_.translating;
+     if (steady_pass_) ++stats_.steady_skipped;
 +    ++frame_skipped_;
      return false;
    }
  
-@@ -1130,6 +1134,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
-   if (!pipelines_->Ready(*pipeline)) {
+@@ -1155,6 +1159,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
      // Still compiling (D28), or failed (logged): the draw is skipped.
      ++(pipeline->failed ? stats_.failed : stats_.compiling);
+     if (steady_pass_ && !pipeline->failed) ++stats_.steady_skipped;
 +    if (!pipeline->failed) ++frame_skipped_;
      return false;
    }
  
-@@ -1720,7 +1725,12 @@ void DrawPath::EndFrame() {
+@@ -1798,7 +1803,12 @@ void DrawPath::EndFrame() {
    // cache saved, on a thread of its own (D45), once nothing new was compiled for 10 s (at 60 FPS), and at
    // most every 5 minutes (D52): new areas bring pipelines every few seconds, and each save writes tens of
    // MB. What is not saved yet is in the records, compiled again at the next start.
@@ -167,12 +167,12 @@ index cc359ff..01cd52c 100644
    // A burst of new translations in play (a new area, D115): every core but one on them until it is through, so
    // their draws are skipped for fewer frames.
 diff --git a/src/draw.h b/src/draw.h
-index aeb1979..474bf2b 100644
+index 8c7ce66..cf9b245 100644
 --- a/src/draw.h
 +++ b/src/draw.h
-@@ -231,6 +231,7 @@ class DrawPath {
-   bool aspect_box_ = false;  // D43
+@@ -264,6 +264,7 @@ class DrawPath {
    bool wait_for_pipelines_ = false;  // D101
+   bool steady_pass_ = false;         // D126
    double scene_wait_budget_ms_ = 0.0, scene_wait_left_ms_ = 0.0;  // D116
 +  uint32_t frame_skipped_ = 0;  // draws skipped for compiles in this frame (D117)
    bool jitter_on_ = false;   // D47

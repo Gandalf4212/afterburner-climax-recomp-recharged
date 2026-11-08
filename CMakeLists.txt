@@ -1,4 +1,4 @@
-# After Burner Climax Recharged - ReXGlue recompiled project
+# After Burner Climax Recomp (Recharged) - ReXGlue recompiled project
 #
 # One executable, recompiled from the World release (default.xex 0.0.1.2).
 # The SDK is built from source with this repo's patches (patches/rexglue-sdk):
@@ -72,7 +72,9 @@ target_include_directories(after_burner_climax PRIVATE "${REXSDK_DIR}/thirdparty
 # NativeXRenderer (docs/native-x-renderer.md): built in, used when recomp_renderer = "nativex" (F1 > Renderer).
 # The SDK's Xenos plugin keeps running the command processor it observes; with Xenia selected it draws as before.
 add_subdirectory(thirdparty/native_x_renderer)
-target_sources(after_burner_climax PRIVATE src/native_x_renderer_abc.cpp)
+target_sources(after_burner_climax PRIVATE src/native_x_renderer_abc.cpp src/shader_scan.cpp)
+# The shader scan inflates shader_hlsl.farc with stb_image's zlib decoder (internal linkage).
+target_include_directories(after_burner_climax PRIVATE "${REXSDK_DIR}/thirdparty/stb")
 target_link_libraries(after_burner_climax PRIVATE native_x_renderer)
 target_compile_definitions(after_burner_climax PRIVATE ABC_NATIVE_X_RENDERER=1)
 native_x_renderer_copy_runtime(after_burner_climax)
