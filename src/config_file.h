@@ -56,6 +56,7 @@ inline const ConfigSection kConfigSections[] = {
     {"Display",
      {
          {"fullscreen", "true = fullscreen, false = windowed (F11 switches)"},
+         {"fullscreen_exclusive", "With fullscreen: true = exclusive (switches the display mode), false = borderless"},
          {"window_width", "Window size in windowed mode (0 = 1280)"},
          {"window_height", ""},
          {"present_letterbox", "true = keep 16:9 with black bars, false = stretch"},

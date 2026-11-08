@@ -33,14 +33,21 @@ namespace {
 
 namespace cvar = rex::cvar;
 
-// ------------------------------------------------------------------ colours
-// Same palette as the ReBirth recomp menus.
+// ------------------------------------------------------------------ colours (blue theme)
 const ImU32 kWhite = IM_COL32(255, 255, 255, 255);
-const ImU32 kGrey = IM_COL32(178, 178, 191, 255);
-const ImU32 kGold = IM_COL32(255, 217, 77, 255);
-const ImU32 kPanel = IM_COL32(13, 18, 38, 224);
-const ImU32 kHighlight = IM_COL32(64, 89, 178, 230);
-const ImU32 kShade = IM_COL32(0, 0, 0, 115);
+const ImU32 kGrey = IM_COL32(150, 172, 210, 255);
+const ImU32 kDim = IM_COL32(95, 115, 155, 255);
+const ImU32 kGold = IM_COL32(255, 210, 90, 255);
+const ImU32 kAccent = IM_COL32(90, 200, 255, 255);
+const ImU32 kShade = IM_COL32(1, 6, 20, 175);
+const ImU32 kPanelTop = IM_COL32(12, 36, 86, 242);
+const ImU32 kPanelBottom = IM_COL32(3, 10, 30, 242);
+const ImU32 kBorder = IM_COL32(70, 150, 255, 190);
+const ImU32 kTabOn = IM_COL32(38, 108, 222, 240);
+const ImU32 kTabOff = IM_COL32(16, 40, 88, 210);
+const ImU32 kRowLeft = IM_COL32(44, 122, 238, 225);
+const ImU32 kRowRight = IM_COL32(18, 56, 135, 90);
+const ImU32 kPill = IM_COL32(6, 20, 52, 225);
 
 // ------------------------------------------------------------------ cvar helpers
 bool GetBool(const char* n) { return cvar::Query<bool>(n); }
@@ -185,7 +192,8 @@ const char* MainNote(int row) {
   switch (row) {
     case kRenderer:
       return "Xenia: emulated GPU (default). NativeX: Vulkan, draws the game natively (experimental). Next launch.";
-    case kDisplayMode: return "F11 also switches between windowed and fullscreen.";
+    case kDisplayMode:
+      return "Borderless: quick Alt+Tab. Fullscreen: exclusive, switches the display mode. F11 toggles windowed.";
     case kWindowSize: return "Size of the window in windowed mode. Applies next launch.";
     case kRenderRes:
       return NativeX() ? "Above your screen's size renders bigger and scales down: smoother edges. Next launch."
@@ -205,6 +213,14 @@ const char* MainNote(int row) {
     case kEditKeys: return "Choose which key presses each controller button.";
   }
   return nullptr;
+}
+
+// Display mode: windowed, borderless fullscreen (at the desktop's mode), exclusive fullscreen.
+const char* const kDisplayLabels[] = {"Windowed", "Borderless fullscreen", "Fullscreen"};
+constexpr int kDisplayCount = 3;
+int DisplayIndex() {
+  if (!GetBool("fullscreen")) return 0;
+  return GetBool("fullscreen_exclusive") ? 2 : 1;
 }
 
 int WindowSizeIndex() {
@@ -227,7 +243,7 @@ int AnisoIndex() {
 std::string MainValue(int row) {
   switch (row) {
     case kRenderer: return NativeX() ? "NativeX (Vulkan)" : "Xenia (emulated GPU)";
-    case kDisplayMode: return GetBool("fullscreen") ? "Fullscreen" : "Windowed";
+    case kDisplayMode: return kDisplayLabels[DisplayIndex()];
     case kWindowSize: return kWindowSizes[WindowSizeIndex()].label;
     case kRenderRes:
       if (NativeX()) return NativeXRow("native_x_renderer_resolution_scale") ? kNxrScaleLabels[NxrScaleIndex()] : "-";
@@ -308,6 +324,27 @@ std::string KeyDisplay(const std::string& name) {
   return name;
 }
 
+// ------------------------------------------------------------------ categories
+struct Tab {
+  const char* name;
+  std::vector<int> rows;
+};
+const std::vector<Tab>& Tabs() {
+  static const std::vector<Tab> tabs = {
+      {"DISPLAY", {kDisplayMode, kWindowSize, kRenderRes, kAspect, kScreenSync}},
+      {"GRAPHICS", {kRenderer, kAntiAlias, kFiltering, kCompileWait}},
+      {"AUDIO", {kAudioBuffer}},
+      {"CONTROLS", {kKeyboard, kEditKeys}},
+      {"SYSTEM", {kLogFile, kCloseMenu, kQuit}},
+  };
+  return tabs;
+}
+constexpr int kMaxTabRows = 5;
+
+// ------------------------------------------------------------------ gamepad (controller 1)
+constexpr uint16_t kPadUp = 0x0001, kPadDown = 0x0002, kPadLeft = 0x0004, kPadRight = 0x0008;
+constexpr uint16_t kPadLB = 0x0100, kPadRB = 0x0200, kPadA = 0x1000, kPadB = 0x2000;
+
 // ------------------------------------------------------------------ drawing helpers
 struct Painter {
   ImDrawList* dl;
@@ -320,14 +357,68 @@ struct Painter {
   void Text(float x, float y, const char* s, ImU32 col, float scale = 1.0f) const {
     dl->AddText(font, size * scale, ImVec2(x, y), col, s);
   }
-  void Rect(float x, float y, float w, float h, ImU32 col) const {
-    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), col);
+  void TextWrapped(float x, float y, float w, const char* s, ImU32 col, float scale = 1.0f) const {
+    dl->AddText(font, size * scale, ImVec2(x, y), col, s, nullptr, w);
+  }
+  void TextCentered(float cx, float y, const char* s, ImU32 col, float scale = 1.0f) const {
+    Text(cx - TextWidth(s, scale) / 2, y, s, col, scale);
+  }
+  void Rect(float x, float y, float w, float h, ImU32 col, float rounding = 0.0f) const {
+    dl->AddRectFilled(ImVec2(x, y), ImVec2(x + w, y + h), col, rounding);
+  }
+  void Frame(float x, float y, float w, float h, ImU32 col, float rounding, float thickness) const {
+    dl->AddRect(ImVec2(x, y), ImVec2(x + w, y + h), col, rounding, 0, thickness);
+  }
+  void Gradient(float x, float y, float w, float h, ImU32 top_left, ImU32 top_right, ImU32 bottom_right,
+                ImU32 bottom_left) const {
+    dl->AddRectFilledMultiColor(ImVec2(x, y), ImVec2(x + w, y + h), top_left, top_right, bottom_right,
+                                bottom_left);
   }
 };
 
+bool Hovered(float x, float y, float w, float h) {
+  return ImGui::IsMouseHoveringRect(ImVec2(x, y), ImVec2(x + w, y + h));
+}
 bool RowClicked(float x, float y, float w, float h, int mouse_button) {
-  return ImGui::IsMouseHoveringRect(ImVec2(x, y), ImVec2(x + w, y + h)) &&
-         ImGui::IsMouseClicked(mouse_button);
+  return Hovered(x, y, w, h) && ImGui::IsMouseClicked(mouse_button);
+}
+
+// The panel both pages share: shade, gradient panel with a glowing border, the title and an accent line.
+// Returns the y below the header.
+float DrawPanel(const Painter& p, float px, float py, float pw, float ph, float scale, const std::string& title,
+                const char* subtitle) {
+  ImGuiIO& io = ImGui::GetIO();
+  p.Rect(0, 0, io.DisplaySize.x, io.DisplaySize.y, kShade);
+  const float r = 14 * scale;
+  p.Rect(px + 6 * scale, py + 8 * scale, pw, ph, IM_COL32(0, 0, 0, 90), r);  // drop shadow
+  p.dl->AddRectFilled(ImVec2(px, py), ImVec2(px + pw, py + ph), kPanelBottom, r);
+  p.Gradient(px + r * 0.3f, py + r * 0.3f, pw - r * 0.6f, ph * 0.45f, kPanelTop, kPanelTop,
+             IM_COL32(3, 10, 30, 0), IM_COL32(3, 10, 30, 0));
+  p.Frame(px, py, pw, ph, IM_COL32(70, 150, 255, 60), r, 6 * scale);
+  p.Frame(px, py, pw, ph, kBorder, r, 1.5f * scale);
+  float x = px + 28 * scale, y = py + 20 * scale;
+  p.Text(x, y, title.c_str(), kWhite, 1.25f);
+  float tw = p.TextWidth(title.c_str(), 1.25f);
+  p.Text(x + tw + 14 * scale, y + p.size * 0.38f, subtitle, kAccent, 0.8f);
+  y += p.size * 1.25f + 10 * scale;
+  p.Gradient(x, y, pw - 56 * scale, 2 * scale, kAccent, IM_COL32(90, 200, 255, 0), IM_COL32(90, 200, 255, 0),
+             kAccent);
+  return y + 14 * scale;
+}
+
+// A value as a pill with arrows: "<  value  >".
+void DrawValue(const Painter& p, float x, float y, float w, float lh, const std::string& value, bool selected,
+               bool inactive) {
+  const float pad = 6.0f;
+  p.Rect(x, y - pad * 0.5f, w, lh - pad, kPill, (lh - pad) / 2);
+  if (selected && !inactive) p.Frame(x, y - pad * 0.5f, w, lh - pad, kAccent, (lh - pad) / 2, 1.5f);
+  float ty = y + (lh - pad - p.size * 0.9f) / 2 - pad * 0.5f;
+  p.TextCentered(x + w / 2, ty, value.c_str(), inactive ? kDim : kWhite, 0.9f);
+  if (!inactive) {
+    ImU32 arrow = selected ? kAccent : kDim;
+    p.Text(x + 12, ty, "<", arrow, 0.9f);
+    p.Text(x + w - 12 - p.TextWidth(">", 0.9f), ty, ">", arrow, 0.9f);
+  }
 }
 
 }  // namespace
@@ -335,7 +426,10 @@ bool RowClicked(float x, float y, float w, float h, int mouse_button) {
 // ================================================================== GameMenu
 
 GameMenu::GameMenu(rex::ui::ImGuiDrawer* drawer, MenuHost host)
-    : ImGuiDialog(drawer), host_(std::move(host)) {}
+    : ImGuiDialog(drawer), host_(std::move(host)) {
+  // Buttons already held when the menu opens do not act.
+  pad_prev_ = host_.pad_buttons ? host_.pad_buttons() : 0;
+}
 
 GameMenu::~GameMenu() = default;
 
@@ -363,9 +457,10 @@ void GameMenu::Change(int row, int dir) {
       status_ = "Renderer changes on the next launch.";
       break;
     case kDisplayMode: {
-      bool fs = !GetBool("fullscreen");
-      SetBool("fullscreen", fs);
-      if (host_.set_fullscreen) host_.set_fullscreen(fs);
+      int i = (DisplayIndex() + dir + kDisplayCount) % kDisplayCount;
+      SetBool("fullscreen_exclusive", i == 2);
+      SetBool("fullscreen", i != 0);
+      if (host_.set_fullscreen) host_.set_fullscreen(i != 0);
       break;
     }
     case kWindowSize: {
@@ -404,7 +499,7 @@ void GameMenu::Change(int row, int dir) {
       char buf[16];
       std::snprintf(buf, sizeof buf, "%.1f", kWaitValues[i]);
       SetStr("native_x_renderer_scene_wait_ms", buf);
-      status_ = "Applies on the next launch.";
+      status_ = "New shaders changes on the next launch.";
       break;
     }
     case kScreenSync:
@@ -442,6 +537,11 @@ void GameMenu::OnDraw(ImGuiIO& io) {
   const ImVec2 display = io.DisplaySize;
   if (display.x <= 0 || display.y <= 0) return;
 
+  // Controller 1: buttons pressed since the last frame.
+  uint16_t pad = host_.pad_buttons ? host_.pad_buttons() : 0;
+  pad_pressed_ = uint16_t(pad & ~pad_prev_);
+  pad_prev_ = pad;
+
   ImGui::SetNextWindowPos(ImVec2(0, 0));
   ImGui::SetNextWindowSize(display);
   ImGui::Begin("##recomp_settings_menu", nullptr,
@@ -458,71 +558,116 @@ void GameMenu::OnDraw(ImGuiIO& io) {
 }
 
 void GameMenu::DrawMain(float scale) {
-  // ---- keyboard
-  int n = kMainRowCount;
-  if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) { sel_ = (sel_ + n - 1) % n; quit_armed_ = false; }
-  if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) { sel_ = (sel_ + 1) % n; quit_armed_ = false; }
-  int activate = 0;  // -1 left, +1 right/enter
-  if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) activate = -1;
-  if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
-      ImGui::IsKeyPressed(ImGuiKey_Space)) {
-    activate = 1;
+  const auto& tabs = Tabs();
+  const int tab_count = int(tabs.size());
+  auto pressed = [&](uint16_t bit) { return (pad_pressed_ & bit) != 0; };
+
+  // ---- category: Left/Right, LB/RB
+  int tab_dir = 0;
+  if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || pressed(kPadLB) || pressed(kPadLeft)) tab_dir = -1;
+  if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || pressed(kPadRB) || pressed(kPadRight)) tab_dir = 1;
+  if (tab_dir) {
+    tab_ = (tab_ + tab_dir + tab_count) % tab_count;
+    sel_ = 0;
+    quit_armed_ = false;
   }
+  const std::vector<int>& rows = tabs[tab_].rows;
+  const int n = int(rows.size());
+  sel_ = std::clamp(sel_, 0, n - 1);
+
+  // ---- row: Up/Down, D-pad
+  if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || pressed(kPadUp)) { sel_ = (sel_ + n - 1) % n; quit_armed_ = false; }
+  if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || pressed(kPadDown)) { sel_ = (sel_ + 1) % n; quit_armed_ = false; }
+  // ---- value: A / Enter / Space next, B / Backspace back
+  int activate = 0;
+  if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_Space) || pressed(kPadA)) activate = 1;
+  if (ImGui::IsKeyPressed(ImGuiKey_Backspace) || pressed(kPadB)) activate = -1;
 
   // ---- layout
   ImGuiIO& io = ImGui::GetIO();
-  Painter p{ImGui::GetWindowDrawList(), ImGui::GetFont(), 26.0f * scale};
-  float lh = p.size * 1.35f;
-  float pw = p.TextWidth("M") * 50.0f;
-  float ph = (n + 4.5f) * lh;
-  float px = (io.DisplaySize.x - pw) / 2, py = (io.DisplaySize.y - ph) / 2;
-  float value_x = px + 20 * scale + p.TextWidth("M") * 20.0f;
+  Painter p{ImGui::GetWindowDrawList(), ImGui::GetFont(), 24.0f * scale};
+  const float em = p.TextWidth("M");
+  const float lh = p.size * 1.7f;
+  const float pw = std::min(io.DisplaySize.x - 40 * scale, em * 46.0f);
+  const float tab_h = p.size * 1.6f;
+  const float ph = 20 * scale + p.size * 1.25f + 24 * scale + tab_h + 18 * scale + kMaxTabRows * lh +
+                   p.size * 2.6f + p.size * 1.6f + 16 * scale;
+  const float px = (io.DisplaySize.x - pw) / 2, py = (io.DisplaySize.y - ph) / 2;
+  const float inner_x = px + 28 * scale, inner_w = pw - 56 * scale;
 
-  p.Rect(0, 0, io.DisplaySize.x, io.DisplaySize.y, kShade);
-  p.Rect(px, py, pw, ph, kPanel);
-  std::string title = host_.title + "  -  SETTINGS";
-  p.Text(px + 20 * scale, py + 14 * scale, title.c_str(), kGold);
+  float y = DrawPanel(p, px, py, pw, ph, scale, host_.title, "SETTINGS");
 
-  float y = py + 14 * scale + lh * 1.4f;
-  for (int i = 0; i < n; i++) {
-    float rx = px + 8 * scale, rw = pw - 16 * scale;
-    // ---- mouse: hover selects, left click = next, right click = previous
-    if (ImGui::IsMouseHoveringRect(ImVec2(rx, y - 4 * scale), ImVec2(rx + rw, y - 4 * scale + lh)) &&
-        (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) {
+  // ---- tab bar
+  {
+    const float hint_w = p.TextWidth("LB", 0.7f) + 16 * scale;
+    p.Text(inner_x, y + (tab_h - p.size * 0.7f) / 2, "LB", kDim, 0.7f);
+    p.Text(inner_x + inner_w - p.TextWidth("RB", 0.7f), y + (tab_h - p.size * 0.7f) / 2, "RB", kDim, 0.7f);
+    const float bar_x = inner_x + hint_w, bar_w = inner_w - 2 * hint_w;
+    const float gap = 6 * scale, w = (bar_w - gap * (tab_count - 1)) / tab_count;
+    for (int t = 0; t < tab_count; t++) {
+      float tx = bar_x + t * (w + gap);
+      if (RowClicked(tx, y, w, tab_h, ImGuiMouseButton_Left) && t != tab_) {
+        tab_ = t;
+        sel_ = 0;
+        quit_armed_ = false;
+      }
+      const bool on = t == tab_;
+      p.Rect(tx, y, w, tab_h, on ? kTabOn : kTabOff, 8 * scale);
+      if (on) p.Rect(tx + 10 * scale, y + tab_h - 3 * scale, w - 20 * scale, 3 * scale, kAccent, 2 * scale);
+      else if (Hovered(tx, y, w, tab_h)) p.Frame(tx, y, w, tab_h, kBorder, 8 * scale, 1.0f);
+      p.TextCentered(tx + w / 2, y + (tab_h - p.size * 0.8f) / 2, tabs[t].name, on ? kWhite : kGrey, 0.8f);
+    }
+    y += tab_h + 18 * scale;
+  }
+
+  // ---- rows
+  const std::vector<int>& cur = tabs[tab_].rows;
+  const float value_w = inner_w * 0.5f, value_x = inner_x + inner_w - value_w - 8 * scale;
+  for (int i = 0; i < int(cur.size()); i++) {
+    const int row = cur[i];
+    const float ry = y + i * lh;
+    // mouse: hover selects, left click = next, right click = previous
+    if (Hovered(inner_x, ry, inner_w, lh - 4 * scale) && (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) {
       if (sel_ != i) quit_armed_ = false;
       sel_ = i;
     }
-    if (RowClicked(rx, y - 4 * scale, rw, lh, ImGuiMouseButton_Left)) { sel_ = i; activate = 1; }
-    if (RowClicked(rx, y - 4 * scale, rw, lh, ImGuiMouseButton_Right)) { sel_ = i; activate = -1; }
+    if (RowClicked(inner_x, ry, inner_w, lh - 4 * scale, ImGuiMouseButton_Left)) { sel_ = i; activate = 1; }
+    if (RowClicked(inner_x, ry, inner_w, lh - 4 * scale, ImGuiMouseButton_Right)) { sel_ = i; activate = -1; }
 
-    if (i == sel_) p.Rect(rx, y - 4 * scale, rw, lh, kHighlight);
-    p.Text(px + 20 * scale, y, MainLabel(i), i == sel_ ? kWhite : kGrey);
-    if (IsOptionRow(i)) {
-      std::string value = MainValue(i);
-      const bool inactive = value == kNativeXOnly || value == "-";
-      std::string v = inactive ? value : "< " + value + " >";
-      p.Text(value_x, y, v.c_str(), inactive ? kGrey : kWhite);
-    } else if (i == kEditKeys) {
-      p.Text(value_x, y, ">", kWhite);
-    } else if (i == kQuit && i == sel_ && quit_armed_) {
-      p.Text(value_x, y, "press again to quit", kGold);
+    const bool selected = i == sel_;
+    if (selected) {
+      p.dl->AddRectFilledMultiColor(ImVec2(inner_x, ry), ImVec2(inner_x + inner_w, ry + lh - 4 * scale), kRowLeft,
+                                    kRowRight, kRowRight, kRowLeft);
+      p.Rect(inner_x, ry, 4 * scale, lh - 4 * scale, kAccent);
     }
-    y += lh;
+    const float ty = ry + (lh - 4 * scale - p.size) / 2;
+    p.Text(inner_x + 18 * scale, ty, MainLabel(row), selected ? kWhite : kGrey);
+    if (IsOptionRow(row)) {
+      std::string value = MainValue(row);
+      const bool inactive = value == kNativeXOnly || value == "-";
+      DrawValue(p, value_x, ry + 3 * scale, value_w, lh - 4 * scale, value, selected, inactive);
+    } else if (row == kEditKeys) {
+      p.Text(value_x + value_w - p.TextWidth(">"), ty, ">", selected ? kAccent : kDim);
+    } else if (row == kQuit && selected && quit_armed_) {
+      p.Text(value_x, ty, "press A / Enter again to quit", kGold, 0.85f);
+    }
   }
+  y += kMaxTabRows * lh;
 
   // ---- act on the selection
   if (activate != 0) {
-    if (IsOptionRow(sel_)) {
-      Change(sel_, activate);
+    const int row = cur[sel_];
+    if (IsOptionRow(row)) {
+      Change(row, activate);
     } else if (activate > 0) {
-      switch (sel_) {
+      switch (row) {
         case kEditKeys:
           page_ = Page::kKeys;
           keys_sel_ = 0;
           break;
         case kCloseMenu:
           Close();
-          break;
+          return;
         case kQuit:
           if (quit_armed_) {
             if (host_.quit) host_.quit();
@@ -531,24 +676,29 @@ void GameMenu::DrawMain(float scale) {
           }
           break;
       }
+    } else {
+      Close();  // B / Backspace on an action row leaves the menu
+      return;
     }
   }
 
-  const char* note = MainNote(sel_);
-  std::string bottom = !status_.empty() ? status_
-                       : note             ? note
-                                          : "Up/Down select, Left/Right change. Saved automatically.";
-  p.Text(px + 20 * scale, y + lh * 0.4f, bottom.c_str(), status_.empty() ? kGrey : kGold, 0.75f);
-  p.Text(px + 20 * scale, y + lh * 1.3f, "F1 / Esc: close     F3: performance     F11: fullscreen",
-         kGrey, 0.75f);
+  // ---- note and button hints
+  p.Gradient(inner_x, y, inner_w, 1 * scale, IM_COL32(70, 150, 255, 0), kBorder, kBorder, IM_COL32(70, 150, 255, 0));
+  const char* note = MainNote(cur[sel_]);
+  std::string bottom = !status_.empty() ? status_ : note ? note : "Saved automatically.";
+  p.TextWrapped(inner_x, y + 10 * scale, inner_w, bottom.c_str(), status_.empty() ? kGrey : kGold, 0.75f);
+  p.Text(inner_x, y + p.size * 2.6f,
+         "A / Enter: change    B / Backspace: back    LB RB / Left Right: category    F1 / Esc: close", kDim,
+         0.68f);
 }
 
 void GameMenu::DrawKeys(float scale) {
   int n = kKeysRowCount;
+  auto pressed = [&](uint16_t bit) { return (pad_pressed_ & bit) != 0; };
 
   // ---- waiting for a key?
   if (capturing_ >= 0) {
-    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) || pressed(kPadB)) {
       capturing_ = -1;
     } else {
       for (const auto& k : BindableKeys()) {
@@ -561,57 +711,61 @@ void GameMenu::DrawKeys(float scale) {
       }
     }
   } else {
-    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow)) keys_sel_ = (keys_sel_ + n - 1) % n;
-    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow)) keys_sel_ = (keys_sel_ + 1) % n;
-    if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) ||
-        ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)) {
+    if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || pressed(kPadUp)) keys_sel_ = (keys_sel_ + n - 1) % n;
+    if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || pressed(kPadDown)) keys_sel_ = (keys_sel_ + 1) % n;
+    if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) || ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false) ||
+        pressed(kPadB)) {
       page_ = Page::kMain;
       return;
     }
   }
   bool activate = capturing_ < 0 && (ImGui::IsKeyPressed(ImGuiKey_Enter, false) ||
-                                     ImGui::IsKeyPressed(ImGuiKey_Space, false));
+                                     ImGui::IsKeyPressed(ImGuiKey_Space, false) || pressed(kPadA));
 
   ImGuiIO& io = ImGui::GetIO();
-  Painter p{ImGui::GetWindowDrawList(), ImGui::GetFont(), 24.0f * scale};
-  float lh = p.size * 1.3f;
-  float pw = p.TextWidth("M") * 46.0f;
-  float ph = (n + 4.5f) * lh;
-  float px = (io.DisplaySize.x - pw) / 2, py = (io.DisplaySize.y - ph) / 2;
-  float value_x = px + 20 * scale + p.TextWidth("M") * 22.0f;
+  Painter p{ImGui::GetWindowDrawList(), ImGui::GetFont(), 22.0f * scale};
+  const float lh = p.size * 1.45f;
+  const float pw = std::min(io.DisplaySize.x - 40 * scale, p.TextWidth("M") * 44.0f);
+  const float ph = 20 * scale + p.size * 1.25f + 24 * scale + n * lh + p.size * 3.2f;
+  const float px = (io.DisplaySize.x - pw) / 2, py = (io.DisplaySize.y - ph) / 2;
+  const float inner_x = px + 28 * scale, inner_w = pw - 56 * scale;
+  const float value_x = inner_x + inner_w * 0.55f;
 
-  p.Rect(0, 0, io.DisplaySize.x, io.DisplaySize.y, kShade);
-  p.Rect(px, py, pw, ph, kPanel);
-  p.Text(px + 20 * scale, py + 14 * scale, "KEYBOARD KEYS", kGold);
+  float y = DrawPanel(p, px, py, pw, ph, scale, "KEYBOARD KEYS", "CONTROLS");
 
-  float y = py + 14 * scale + lh * 1.4f;
   for (int i = 0; i < n; i++) {
-    float rx = px + 8 * scale, rw = pw - 16 * scale;
+    const float ry = y + i * lh;
     if (capturing_ < 0) {
-      if (ImGui::IsMouseHoveringRect(ImVec2(rx, y - 4 * scale), ImVec2(rx + rw, y - 4 * scale + lh)) &&
-          (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) {
+      if (Hovered(inner_x, ry, inner_w, lh - 3 * scale) && (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) {
         keys_sel_ = i;
       }
-      if (RowClicked(rx, y - 4 * scale, rw, lh, ImGuiMouseButton_Left)) {
+      if (RowClicked(inner_x, ry, inner_w, lh - 3 * scale, ImGuiMouseButton_Left)) {
         keys_sel_ = i;
         activate = true;
       }
     }
-    if (i == keys_sel_) p.Rect(rx, y - 4 * scale, rw, lh, kHighlight);
+    const bool selected = i == keys_sel_;
+    if (selected) {
+      p.dl->AddRectFilledMultiColor(ImVec2(inner_x, ry), ImVec2(inner_x + inner_w, ry + lh - 3 * scale), kRowLeft,
+                                    kRowRight, kRowRight, kRowLeft);
+      p.Rect(inner_x, ry, 4 * scale, lh - 3 * scale, kAccent);
+    }
+    const float ty = ry + (lh - 3 * scale - p.size) / 2;
+    const ImU32 col = selected ? kWhite : kGrey;
     if (i < kKeyBindCount) {
-      p.Text(px + 20 * scale, y, kKeyBinds[i].label, i == keys_sel_ ? kWhite : kGrey);
+      p.Text(inner_x + 18 * scale, ty, kKeyBinds[i].label, col);
       if (i == capturing_) {
-        p.Text(value_x, y, "press a key...", kGold);
+        p.Text(value_x, ty, "press a key...", kGold);
       } else {
-        p.Text(value_x, y, KeyDisplay(GetStr(kKeyBinds[i].cvar)).c_str(), kWhite);
+        p.Text(value_x, ty, KeyDisplay(GetStr(kKeyBinds[i].cvar)).c_str(), kAccent);
       }
     } else if (i == kKeysReset) {
-      p.Text(px + 20 * scale, y, "Reset to defaults", i == keys_sel_ ? kWhite : kGrey);
+      p.Text(inner_x + 18 * scale, ty, "Reset to defaults", col);
     } else {
-      p.Text(px + 20 * scale, y, "Back", i == keys_sel_ ? kWhite : kGrey);
+      p.Text(inner_x + 18 * scale, ty, "Back", col);
     }
-    y += lh;
   }
+  y += n * lh;
 
   if (activate) {
     if (keys_sel_ < kKeyBindCount) {
@@ -624,11 +778,10 @@ void GameMenu::DrawKeys(float scale) {
     }
   }
 
-  const char* hint = capturing_ >= 0 ? "Press the new key. Esc cancels."
-                                     : "Enter: change key   Backspace / Left: back";
-  p.Text(px + 20 * scale, y + lh * 0.4f, hint, capturing_ >= 0 ? kGold : kGrey, 0.75f);
-  p.Text(px + 20 * scale, y + lh * 1.3f, "Keys only work when Keyboard controls is On.", kGrey,
-         0.75f);
+  const char* hint = capturing_ >= 0 ? "Press the new key. Esc / B cancels."
+                                     : "A / Enter: change key    B / Backspace: back";
+  p.Text(inner_x, y + 8 * scale, hint, capturing_ >= 0 ? kGold : kDim, 0.75f);
+  p.Text(inner_x, y + 8 * scale + p.size * 1.1f, "Keys only work when Keyboard controls is On.", kDim, 0.75f);
 }
 
 }  // namespace recomp_ui

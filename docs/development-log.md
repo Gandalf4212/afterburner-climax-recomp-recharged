@@ -113,6 +113,12 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 - [x] Shader cache: `src/shader_scan.*` reads FArC (`FArC`, table size, alignment; entries name/offset/
       compressed/size; gzip each, inflated with stb_image's zlib decoder). World: 101 entries -> 96 unique
       (41 VS, 55 PS), tested on Linux against the owner's package. Fingerprint: the .farc names/sizes, version 1.
+- [x] F1 menu redesign (owner's request): blue theme (gradient panel, glowing border, accent line, pill values),
+      five categories DISPLAY / GRAPHICS / AUDIO / CONTROLS / SYSTEM switched with Left/Right, LB/RB or the D-pad
+      left/right; Up/Down or D-pad pick a row; A / Enter / Space next value, B / Backspace previous (B on an action
+      row closes). Controller 1 read with `InputSystem::GetStateForUI` (host `pad_buttons`). Display mode now
+      Windowed / Borderless fullscreen / Fullscreen (SDK cvar `fullscreen_exclusive`; live, RefreshFullscreen when
+      only the kind changes). Renderer row stays until NativeX is the only renderer (owner: remove it then).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

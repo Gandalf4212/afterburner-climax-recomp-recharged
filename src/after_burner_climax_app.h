@@ -237,7 +237,22 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     host.title = "AFTER BURNER CLIMAX";
     host.config_path = config_path_;
     host.set_fullscreen = [this](bool fs) {
-      app_context().CallInUIThreadDeferred([this, fs] { window()->SetFullscreen(fs); });
+      // fullscreen_exclusive is already set: re-apply when only borderless <-> exclusive changed.
+      app_context().CallInUIThreadDeferred([this, fs] {
+        if (window()->IsFullscreen() == fs) {
+          window()->RefreshFullscreen();
+        } else {
+          window()->SetFullscreen(fs);
+        }
+      });
+    };
+    // Controller 1's buttons for the menu (D-pad, LB/RB, A/B), read for the UI while the game sees a neutral pad.
+    host.pad_buttons = [this]() -> uint16_t {
+      auto* input = runtime() ? static_cast<rex::input::InputSystem*>(runtime()->input_system()) : nullptr;
+      if (!input) return 0;
+      rex::input::X_INPUT_STATE state{};
+      if (input->GetStateForUI(0, &state) != 0) return 0;
+      return uint16_t(state.gamepad.buttons);
     };
     host.quit = [this] {
       exit_watchdog::arm("menu Quit");
