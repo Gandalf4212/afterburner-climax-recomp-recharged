@@ -96,7 +96,8 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 
 ## Next
 - [ ] First CI build on `nativex` (owner tests: boots, audio, quit ends the process).
-- [ ] Options menu port from Mad Riders + Renderer row (Xenia default) + ASCII config header.
+- [x] Options menu port (committed 1940c8f, not pushed yet: waits for the first CI result).
+- [~] NativeX mapping: see docs/native-x-renderer.md (device layout = XDK 7978 up to the shadow, current objects 7978 + 168).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.
