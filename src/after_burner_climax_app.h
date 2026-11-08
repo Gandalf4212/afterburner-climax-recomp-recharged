@@ -174,7 +174,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     auto* input_sys = static_cast<rex::input::InputSystem*>(runtime()->input_system());
     if (input_sys && imgui_drawer()) {
       input_sys->SetActiveCallback([this]() {
-        if (menu_) return false;
+        if (menu_) return true;  // the menu reads the pad; the game is blocked (BlockGameInput)
         return !imgui_drawer()->GetIO().WantCaptureMouse;
       });
     }
@@ -234,6 +234,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       if (menu_->capturing()) return;  // Esc cancels the key capture instead
       delete menu_;                    // removes itself from the drawer
       menu_ = nullptr;
+      BlockGameInput(false);
       return;
     }
     if (!imgui_drawer()) return;
@@ -262,9 +263,28 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       exit_watchdog::arm("menu Quit");
       app_context().CallInUIThreadDeferred([this] { window()->RequestClose(); });
     };
-    host.on_closed = [this] { menu_ = nullptr; };
+    host.on_closed = [this] {
+      menu_ = nullptr;
+      BlockGameInput(false);
+    };
+    BlockGameInput(true);
     menu_ = new recomp_ui::GameMenu(imgui_drawer(), std::move(host));
   }
+
+  // While the menu is open the game reads a neutral pad, but the input drivers stay active so the menu can read
+  // the controller (GetStateForUI). Buttons still held when it closes stay hidden from the game until released.
+  void BlockGameInput(bool on) {
+    if (on == input_blocked_) return;
+    auto* input = runtime() ? static_cast<rex::input::InputSystem*>(runtime()->input_system()) : nullptr;
+    if (!input) return;
+    input_blocked_ = on;
+    if (on) {
+      input->AddUIInputBlocker();
+    } else {
+      input->RemoveUIInputBlocker();
+    }
+  }
+  bool input_blocked_ = false;
 
   std::filesystem::path config_path_;
   std::filesystem::path game_data_root_;

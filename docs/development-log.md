@@ -131,6 +131,16 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       no log line. Added `src/crash_handler.h` (unhandled-exception filter: code, address, stack unwound from the
       context, symbols from the shipped after_burner_climax.pdb; written to the log and crash.txt) and debug info
       (CodeView) for src/ and NativeX only.
+- [x] Owner test of eb733a0: NativeX runs without crashing; title screen drawn only in its top 256 of 720 lines
+      (one 1280x256 4x MSAA tile). Hooked BeginTiling 8224DC78 (count -> +12924, rects x1,y1,x2,y2 at r6) and the
+      tiling end 82248DB0 (clears +12924 at 82249018; its r4 is a pointer, so not the XDK EndTiling argument
+      layout: NativeX only uses it to end the pass). Menu got no controller input: the app's input active-callback
+      returned false while the menu was open, and the SDL driver then reports an untouched pad to GetStateForUI
+      too. Now the menu holds `InputSystem::AddUIInputBlocker` (game reads a neutral pad) and the callback stays
+      true. Controls per the owner: Left/Right (D-pad) change the value, A/Enter change, LB/RB (Q/E, Tab,
+      PageUp/Down) category, B/Backspace close.
+- [ ] Open: SET_CONSTANT packets with bin predication (BeginShaderConstantF4 ORs in +12892) go to
+      `predicated_writes`, which Gather does not apply; check if the game writes constants inside a tiled pass.
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

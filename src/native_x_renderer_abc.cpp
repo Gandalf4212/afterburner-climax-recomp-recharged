@@ -35,6 +35,11 @@ NATIVE_X_RENDERER_HOOK(8224C410, SetTexture)            // addi r11,r4,3180: +12
 NATIVE_X_RENDERER_HOOK(8224A530, BeginShaderConstantF4)
 // Recorded command buffers: flush of the inherited state, then INDIRECT_BUFFER per segment (cmdbuf+116); 1 site.
 NATIVE_X_RENDERER_HOOK(822496E0, RunCommandBuffer)
+// Tiling (4x MSAA scene in 1280x256 tiles): BeginTiling(dev, flags, count -> +12924, rects x1,y1,x2,y2, clear
+// color, z f1, stencil) from the engine's frame (82168984); the tiling end clears +12924 (82249018), one engine site
+// (82167680) whose second argument is a pointer, not resolve flags: NativeX only uses it to end the tiled pass.
+NATIVE_X_RENDERER_HOOK(8224DC78, BeginTiling)
+NATIVE_X_RENDERER_HOOK(82248DB0, EndTiling)
 // Memory, command buffer
 NATIVE_X_RENDERER_HOOK(82255350, FlushCpuRange)         // dcbf loop, 18 library callers
 NATIVE_X_RENDERER_HOOK(822544B8, KickSegment)           // 112 library callers; write-back +10896, fence +10908

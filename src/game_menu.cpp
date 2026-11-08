@@ -562,10 +562,17 @@ void GameMenu::DrawMain(float scale) {
   const int tab_count = int(tabs.size());
   auto pressed = [&](uint16_t bit) { return (pad_pressed_ & bit) != 0; };
 
-  // ---- category: Left/Right, LB/RB
+  // ---- category: LB/RB; keyboard Q/E, Tab (Shift+Tab back), PageUp/PageDown
   int tab_dir = 0;
-  if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || pressed(kPadLB) || pressed(kPadLeft)) tab_dir = -1;
-  if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || pressed(kPadRB) || pressed(kPadRight)) tab_dir = 1;
+  const bool shift = ImGui::GetIO().KeyShift;
+  if (pressed(kPadLB) || ImGui::IsKeyPressed(ImGuiKey_Q, false) || ImGui::IsKeyPressed(ImGuiKey_PageUp) ||
+      (shift && ImGui::IsKeyPressed(ImGuiKey_Tab))) {
+    tab_dir = -1;
+  }
+  if (pressed(kPadRB) || ImGui::IsKeyPressed(ImGuiKey_E, false) || ImGui::IsKeyPressed(ImGuiKey_PageDown) ||
+      (!shift && ImGui::IsKeyPressed(ImGuiKey_Tab))) {
+    tab_dir = 1;
+  }
   if (tab_dir) {
     tab_ = (tab_ + tab_dir + tab_count) % tab_count;
     sel_ = 0;
@@ -578,10 +585,17 @@ void GameMenu::DrawMain(float scale) {
   // ---- row: Up/Down, D-pad
   if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) || pressed(kPadUp)) { sel_ = (sel_ + n - 1) % n; quit_armed_ = false; }
   if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) || pressed(kPadDown)) { sel_ = (sel_ + 1) % n; quit_armed_ = false; }
-  // ---- value: A / Enter / Space next, B / Backspace back
+  // ---- value: Left/Right (D-pad) back/forward, A / Enter / Space forward; B / Backspace leaves the menu
   int activate = 0;
-  if (ImGui::IsKeyPressed(ImGuiKey_Enter) || ImGui::IsKeyPressed(ImGuiKey_Space) || pressed(kPadA)) activate = 1;
-  if (ImGui::IsKeyPressed(ImGuiKey_Backspace) || pressed(kPadB)) activate = -1;
+  if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow) || pressed(kPadLeft)) activate = -1;
+  if (ImGui::IsKeyPressed(ImGuiKey_RightArrow) || pressed(kPadRight) || ImGui::IsKeyPressed(ImGuiKey_Enter) ||
+      ImGui::IsKeyPressed(ImGuiKey_Space) || pressed(kPadA)) {
+    activate = 1;
+  }
+  if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) || pressed(kPadB)) {
+    Close();
+    return;
+  }
 
   // ---- layout
   ImGuiIO& io = ImGui::GetIO();
@@ -676,9 +690,6 @@ void GameMenu::DrawMain(float scale) {
           }
           break;
       }
-    } else {
-      Close();  // B / Backspace on an action row leaves the menu
-      return;
     }
   }
 
@@ -688,7 +699,7 @@ void GameMenu::DrawMain(float scale) {
   std::string bottom = !status_.empty() ? status_ : note ? note : "Saved automatically.";
   p.TextWrapped(inner_x, y + 10 * scale, inner_w, bottom.c_str(), status_.empty() ? kGrey : kGold, 0.75f);
   p.Text(inner_x, y + p.size * 2.6f,
-         "A / Enter: change    B / Backspace: back    LB RB / Left Right: category    F1 / Esc: close", kDim,
+         "Left Right / A: change    LB RB / Q E: category    B / Backspace / F1 / Esc: close", kDim,
          0.68f);
 }
 

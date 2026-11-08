@@ -1,8 +1,9 @@
 // In-game settings menu (shared across the darkuni recomps).
 //
-// A blue panel with five categories (Display, Graphics, Audio, Controls, System): Left/Right or LB/RB switch
-// category, Up/Down or the D-pad pick a row, A / Enter / Space step a value forward, B / Backspace step it back
-// (on an action row B leaves the menu); the mouse works too (left click forward, right click back). A note for
+// A blue panel with five categories (Display, Graphics, Audio, Controls, System): LB/RB (keyboard Q/E, Tab,
+// PageUp/PageDown) switch category, Up/Down or the D-pad pick a row, Left/Right (D-pad) change its value back or
+// forward, A / Enter / Space forward or act, B / Backspace close; the mouse works too (left click forward, right
+// click back). The app blocks the game's input while it is open (InputSystem::AddUIInputBlocker). A note for
 // the row at the bottom; settings saved on every change. Drawn on ReXGlue's ImGui overlay.
 //
 // Open/close: F1 or Esc.  Everything is stored in <app>.toml next to the
