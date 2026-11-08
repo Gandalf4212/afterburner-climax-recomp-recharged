@@ -99,6 +99,10 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 - [x] NativeX built in (submodule at bf965e9), F1 > Renderer switches it; hooks + profile in src/native_x_renderer_abc.cpp. Mad Riders NativeX patches tested against bf965e9: none apply as-is; resolvable overlaps (0001 meets upstream D126; 0002 shader cache only 1 code hunk). Merge them in the shader-cache phase.
 - [x] Options menu port (committed 1940c8f, not pushed yet: waits for the first CI result).
 - [~] NativeX mapping: see docs/native-x-renderer.md (device layout = XDK 7978 up to the shadow, current objects 7978 + 168).
+- [x] Tests on the owner's PC (build 9f958c5): Xenia boots, audio good, quit clean ("Title terminated" 0.2 s
+      after Quit). F10 and `--native_x_renderer_verify_at` both work (frame end hook 82252730 fires, ~59 fps).
+- [~] Verify report: layout right; 8.1 % of draws fully match. Missing: game-written constants (8224A530) and
+      RunCommandBuffer (822496E0). Details in docs/native-x-renderer.md. Both need new NativeX calls.
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

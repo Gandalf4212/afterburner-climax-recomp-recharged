@@ -55,7 +55,20 @@ The D3D library is linked in at about `0x82230000`-`0x82262000`. Tools: NativeX 
 | BeginTiling / EndTiling (candidates) | `8224DC78` / `82248DB0` | save targets, tile count / restore + WAIT_REG_MEM |
 | SetRenderTarget, SetDepthStencilSurface, SetStreamSource, SetTexture, SetIndices, SetVertexDeclaration, SetPixelShader, SetVertexShader, SetScissorRect, SetPredication | see the table above | |
 
+## First verify run (2026-11-08, owner's PC, Xenia renderer, frames 819 and 2400)
+Render state, vertex fetch, texture fetch, shader programs, bool/loop constants: 0 mismatches (layout confirmed).
+Frame 2400: 99 draw calls, 8 fully match (8.1 %). Two causes, both outside what NativeX hooks today:
+- **Game-written float constants.** `8224A530(dev, pixel?, start, vec4Count)` reserves `4*count+5` dwords
+  (`822546E8`), writes a SET_CONSTANT header (`0xC0002D00 | count<<16 | pred +12892`) and returns a pointer the
+  engine then fills (BeginShaderConstantF4-style; no End call, it is inlined). 12 engine sites, e.g.
+  `8216D824`: VS start 108, 8 vec4. The shadow at +1920/+6016 is bypassed, so the tracker's values are stale
+  (VS c72..c75, c0, c16..c24; PS shadow holds non-floats). `8224A5B8` (3 sites in `821673E8`) writes one
+  SET_CONSTANT dword (`0x00040104`). Needs a NativeX call that reads the data at the next tracked call.
+- **Recorded command buffers.** `822496E0(dev, cmdbuf, pred)` = RunCommandBuffer: ANDs the device dirty masks
+  with the buffer's (+24..+56), flushes, then emits INDIRECT_BUFFER (`0xC0013F00`) per segment from the list at
+  cmdbuf+116. 1 engine site (`82166F78`). 576 draw packets came from such buffers. `82243950` (14 sites) emits
+  3 INDIRECT_BUFFERs from device +13992..+15028 (library-owned; to identify).
+
 ## Still to find
-VS/PS constant setters (no plain function writes `+1920 + 16*start`: probably inlined into the engine by the
-XDK headers; scan for `ld/or/std` on `+0`/`+8`), viewport setter, Clear, Begin/EndVertices, buffer Lock/Unlock,
+VS/PS constant setters proper (no plain function writes `+1920 + 16*start`), viewport setter, Clear, Begin/EndVertices, buffer Lock/Unlock,
 TextureUnlock, FlushCpuRange, NewSegment, SetShaderGPRAllocation, queries, the resource object layout.
