@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <system_error>
 
 #include <rex/cvar.h>
 #include <rex/filesystem.h>
@@ -20,6 +21,7 @@
 
 #include <imgui.h>
 
+#include "config_file.h"
 #include "exit_watchdog.h"
 #include "game_keys.h"
 #include "game_menu.h"
@@ -38,6 +40,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   // Default the game data folder to "assets" next to the exe, so the game
   // runs with a plain double-click. --game_data_root still overrides it.
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    ApplyLogSwitch(paths.config_path);
     if (paths.game_data_root.empty()) {
       paths.game_data_root =
           rex::filesystem::GetExecutableFolder() / "assets";
@@ -58,6 +61,10 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   }
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
+#ifdef ABC_BUILD
+    REXLOG_INFO("After Burner Climax Recharged, build {}", ABC_BUILD);
+#endif
+    ApplyRenderer();
     // GPU emulation is opt-in in ReXGlue (gpu_plugin cvar). Default to the
     // Xenos plugin so the game actually renders; --gpu_plugin still overrides.
     if (config.gpu_plugin.empty()) {
@@ -80,7 +87,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       recomp_ui::GameMenu::ApplyDefaultKeys();
       rex::cvar::SetFlagByName("recomp_defaults_applied", "true");
       if (!config_path_.empty()) {
-        rex::cvar::SaveConfig(config_path_);
+        recomp_ui::save_config(config_path_);
       }
       REXLOG_INFO("First launch: wrote default settings to {}",
                   config_path_.filename().string());
@@ -90,7 +97,12 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       rex::cvar::SetFlagByName("audio_maxqframes",
                                std::to_string(recomp_ui::game_keys::kDefaultAudioFrames));
       rex::cvar::SetFlagByName("recomp_defaults_version", "2");
-      if (!config_path_.empty()) rex::cvar::SaveConfig(config_path_);
+      if (!config_path_.empty()) recomp_ui::save_config(config_path_);
+    }
+    // Version 3: the config file lists every menu setting (config_file.h); rewrite it once.
+    if (rex::cvar::Query<int32_t>("recomp_defaults_version") < 3) {
+      rex::cvar::SetFlagByName("recomp_defaults_version", "3");
+      recomp_ui::save_config(config_path_);
     }
     REXLOG_INFO("Audio buffer: {} frames", rex::cvar::Query<int32_t>("audio_maxqframes"));
   }
@@ -106,7 +118,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       bool fs = !window()->IsFullscreen();
       rex::cvar::SetFlagByName("fullscreen", fs ? "true" : "false");
       window()->SetFullscreen(fs);
-      if (!config_path_.empty()) rex::cvar::SaveConfig(config_path_);
+      if (!config_path_.empty()) recomp_ui::save_config(config_path_);
     });
   }
 
@@ -129,6 +141,37 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   }
 
  private:
+  // recomp_renderer (F1 > Renderer): "xenia" = the SDK's Xenos plugin draws
+  // (default); "nativex" = NativeXRenderer draws, the Xenos plugin only runs the
+  // command processor it observes. NativeX is not in this build yet, so a
+  // "nativex" choice falls back to Xenia (logged).
+  static void ApplyRenderer() {
+    const std::string r = rex::cvar::Query<std::string>("recomp_renderer");
+    if (r != "xenia" && r != "nativex") {
+      REXLOG_WARN("recomp_renderer \"{}\" unknown; using xenia", r);
+    }
+    if (r == "nativex") {
+      REXLOG_WARN("Renderer: NativeX is not in this build yet; using Xenia");
+    }
+    REXLOG_INFO("Renderer: Xenia (Xenos plugin)");
+  }
+
+  // recomp_log (off by default; F1 menu, after_burner_climax.toml, --recomp_log=true).
+  // The SDK sets logging up right after this callback, from the config file, and
+  // always opens a file: with logging off every category is "off" and the file goes
+  // to the temp folder instead of a new logs\after_burner_climax_NNN.log per launch.
+  // (From mad-riders-recomp.)
+  static void ApplyLogSwitch(const std::filesystem::path& config_path) {
+    if (std::filesystem::exists(config_path)) rex::cvar::LoadConfig(config_path);
+    if (rex::cvar::Query<bool>("recomp_log") || !rex::cvar::Query<std::string>("log_file").empty()) return;
+    std::error_code ec;
+    auto temp = std::filesystem::temp_directory_path(ec);
+    if (ec) return;
+    rex::cvar::SetFlagByName("log_level", "off");
+    rex::cvar::SetFlagByName("log_file", (temp / "after_burner_climax_log_off.log").string());
+    recomp_ui::g_log_forced_off = true;
+  }
+
   void ToggleMenu() {
     if (menu_) {
       if (menu_->capturing()) return;  // Esc cancels the key capture instead

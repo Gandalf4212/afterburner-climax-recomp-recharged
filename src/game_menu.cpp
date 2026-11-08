@@ -1,9 +1,12 @@
 // In-game settings menu - see game_menu.h. Per-game key layout: game_keys.h.
 
 #include "game_menu.h"
+
+#include "config_file.h"
 #include "game_keys.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <utility>
@@ -19,6 +22,11 @@ REXCVAR_DEFINE_BOOL(recomp_defaults_applied, false, "Recomp",
                     "First-launch defaults have been applied");
 // Bumped when a newer build adds a default (2 = per-game audio buffer).
 REXCVAR_DEFINE_INT32(recomp_defaults_version, 0, "Recomp", "Last applied defaults version");
+// Renderer for the next launch: "xenia" (the SDK's emulated Xenos GPU, default) or
+// "nativex" (NativeXRenderer, Vulkan). Applied at start-up by the app.
+REXCVAR_DEFINE_STRING(recomp_renderer, "xenia", "Recomp", "Renderer: xenia (default) or nativex");
+// Log file in logs\ (off by default; the app applies it at start-up).
+REXCVAR_DEFINE_BOOL(recomp_log, false, "Recomp", "Write a log file in logs\\ (for bug reports)");
 
 namespace recomp_ui {
 namespace {
@@ -41,17 +49,31 @@ std::string GetStr(const char* n) { return cvar::Query<std::string>(n); }
 void SetBool(const char* n, bool v) { cvar::SetFlagByName(n, v ? "true" : "false"); }
 void SetInt(const char* n, int v) { cvar::SetFlagByName(n, std::to_string(v)); }
 void SetStr(const char* n, const std::string& v) { cvar::SetFlagByName(n, v); }
+double GetDouble(const char* n) { return cvar::Query<double>(n); }
+// NativeXRenderer's cvars exist only in builds that link it.
+bool Has(const char* n) {
+  for (const auto& e : cvar::GetRegistry())
+    if (e.name == n) return true;
+  return false;
+}
+// The renderer chosen for this run and the next (recomp_renderer, applied at start-up).
+bool NativeX() { return GetStr("recomp_renderer") == "nativex"; }
+bool NativeXRow(const char* n) { return NativeX() && Has(n); }
 
 // ------------------------------------------------------------------ main page
 enum MainRow {
+  kRenderer,
   kDisplayMode,
   kWindowSize,
   kRenderRes,
-  kVsync,
+  kAntiAlias,
+  kCompileWait,
+  kScreenSync,
   kAspect,
   kFiltering,
   kAudioBuffer,
   kKeyboard,
+  kLogFile,
   kEditKeys,
   kCloseMenu,
   kQuit,
@@ -88,18 +110,70 @@ int AudioIndex() {
   return best;
 }
 
+// Xenia (Xenos plugin): resolution_scale 1..3
 const char* const kRenderLabels[] = {"1x  1280x720 (original)", "2x  2560x1440", "3x  3840x2160"};
+
+// ---- NativeXRenderer settings (rows ported from mad-riders-recomp)
+const char* const kNxrAaValues[] = {"off", "fxaa", "smaa"};
+const char* const kNxrAaLabels[] = {"Off", "FXAA", "SMAA"};
+constexpr int kNxrAaCount = 3;
+int NxrAaIndex() {
+  std::string v = GetStr("native_x_renderer_antialiasing");
+  for (int i = 0; i < kNxrAaCount; i++) if (v == kNxrAaValues[i]) return i;
+  return 2;  // smaa, NativeXRenderer's default
+}
+
+const double kNxrScales[] = {0.0, 1.0, 1.5, 2.0, 3.0};
+const char* const kNxrScaleLabels[] = {"Auto (fit the screen)", "1x  1280x720", "1.5x  1920x1080",
+                                       "2x  2560x1440", "3x  3840x2160"};
+constexpr int kNxrScaleCount = 5;
+int NxrScaleIndex() {
+  double v = GetDouble("native_x_renderer_resolution_scale");
+  for (int i = 0; i < kNxrScaleCount; i++) if (std::abs(kNxrScales[i] - v) < 0.01) return i;
+  return 0;
+}
+
+// native_x_renderer_scene_wait_ms: how long a frame may wait for a shader compiled for the first time
+const double kWaitValues[] = {0.0, 8.0, 33.0};
+const char* const kWaitLabels[] = {"Pop in (no stutter)", "Short wait (recommended)", "Long wait (fewest pop-ins)"};
+constexpr int kWaitCount = 3;
+int WaitIndex() {
+  double v = GetDouble("native_x_renderer_scene_wait_ms"), best = 0;
+  int index = 0;
+  for (int i = 0; i < kWaitCount; i++) {
+    if (kWaitValues[i] <= v + 0.01 && kWaitValues[i] >= best) {
+      best = kWaitValues[i];
+      index = i;
+    }
+  }
+  return index;
+}
+
+const char* const kSyncValues[] = {"", "vsync", "immediate"};
+const char* const kSyncLabels[] = {"Fast, no tearing", "V-Sync", "Immediate (G-Sync/FreeSync)"};
+constexpr int kSyncCount = 3;
+int SyncIndex() {
+  std::string v = GetStr("native_x_renderer_present_mode");
+  for (int i = 0; i < kSyncCount; i++) if (v == kSyncValues[i]) return i;
+  return 0;
+}
+
+constexpr const char* kNativeXOnly = "(NativeX only)";
 
 const char* MainLabel(int row) {
   switch (row) {
+    case kRenderer: return "Renderer";
     case kDisplayMode: return "Display mode";
     case kWindowSize: return "Window size";
     case kRenderRes: return "Render resolution";
-    case kVsync: return "VSync";
+    case kAntiAlias: return "Anti-aliasing";
+    case kCompileWait: return "New shaders";
+    case kScreenSync: return NativeX() ? "Screen sync" : "VSync";
     case kAspect: return "Aspect ratio";
     case kFiltering: return "Texture filtering";
     case kAudioBuffer: return "Audio buffer";
     case kKeyboard: return "Keyboard controls";
+    case kLogFile: return "Log file";
     case kEditKeys: return "Edit keyboard keys";
     case kCloseMenu: return "Close menu";
     case kQuit: return "Quit game";
@@ -109,14 +183,25 @@ const char* MainLabel(int row) {
 
 const char* MainNote(int row) {
   switch (row) {
+    case kRenderer:
+      return "Xenia: emulated GPU (default). NativeX: Vulkan, draws the game natively (experimental). Next launch.";
     case kDisplayMode: return "F11 also switches between windowed and fullscreen.";
     case kWindowSize: return "Size of the window in windowed mode. Applies next launch.";
-    case kRenderRes: return "Internal rendering resolution. Applies next launch.";
-    case kVsync: return "Wait for the monitor refresh. Off can tear.";
+    case kRenderRes:
+      return NativeX() ? "Above your screen's size renders bigger and scales down: smoother edges. Next launch."
+                       : "Internal rendering resolution. Applies next launch.";
+    case kAntiAlias:
+      return "SMAA: sharp, smooth edges (recommended). FXAA: cheaper, softer. NativeX only. Next launch.";
+    case kCompileWait:
+      return "Shaders seen for the first time: wait a little, or skip the object until ready. NativeX only.";
+    case kScreenSync:
+      return NativeX() ? "V-Sync if you see tearing; Immediate for G-Sync/FreeSync screens."
+                       : "Wait for the monitor refresh. Off can tear.";
     case kAspect: return "Keep 16:9 adds black bars on other window shapes.";
     case kFiltering: return "Sharper textures seen at an angle.";
     case kAudioBuffer: return "Bigger fixes crackles and dropouts, smaller has less delay. Next launch.";
     case kKeyboard: return "Play with the keyboard as controller 1.";
+    case kLogFile: return "Writes logs\\after_burner_climax_NNN.log for bug reports. Next launch.";
     case kEditKeys: return "Choose which key presses each controller button.";
   }
   return nullptr;
@@ -141,19 +226,29 @@ int AnisoIndex() {
 // Value text for an option row, or nullptr for an action row.
 std::string MainValue(int row) {
   switch (row) {
+    case kRenderer: return NativeX() ? "NativeX (Vulkan)" : "Xenia (emulated GPU)";
     case kDisplayMode: return GetBool("fullscreen") ? "Fullscreen" : "Windowed";
     case kWindowSize: return kWindowSizes[WindowSizeIndex()].label;
-    case kRenderRes: return kRenderLabels[std::clamp(GetInt("resolution_scale"), 1, 3) - 1];
-    case kVsync: return GetBool("vsync") ? "On" : "Off";
+    case kRenderRes:
+      if (NativeX()) return NativeXRow("native_x_renderer_resolution_scale") ? kNxrScaleLabels[NxrScaleIndex()] : "-";
+      return kRenderLabels[std::clamp(GetInt("resolution_scale"), 1, 3) - 1];
+    case kAntiAlias:
+      return NativeXRow("native_x_renderer_antialiasing") ? kNxrAaLabels[NxrAaIndex()] : kNativeXOnly;
+    case kCompileWait:
+      return NativeXRow("native_x_renderer_scene_wait_ms") ? kWaitLabels[WaitIndex()] : kNativeXOnly;
+    case kScreenSync:
+      if (NativeX()) return NativeXRow("native_x_renderer_present_mode") ? kSyncLabels[SyncIndex()] : "-";
+      return GetBool("vsync") ? "On" : "Off";
     case kAspect: return GetBool("present_letterbox") ? "Keep 16:9" : "Stretch to window";
     case kFiltering: return kAnisoLabels[AnisoIndex()];
     case kAudioBuffer: return kAudioLabels[AudioIndex()];
     case kKeyboard: return GetBool("mnk_mode") ? "On" : "Off";
+    case kLogFile: return GetBool("recomp_log") ? "On" : "Off";
   }
   return {};
 }
 
-bool IsOptionRow(int row) { return row <= kKeyboard; }
+bool IsOptionRow(int row) { return row <= kLogFile; }
 
 // ------------------------------------------------------------------ keys page
 using game_keys::KeyBind;
@@ -257,12 +352,16 @@ void GameMenu::ApplyDefaultKeys() {
 
 void GameMenu::Save() {
   if (!host_.config_path.empty()) {
-    cvar::SaveConfig(host_.config_path);
+    recomp_ui::save_config(host_.config_path);
   }
 }
 
 void GameMenu::Change(int row, int dir) {
   switch (row) {
+    case kRenderer:
+      SetStr("recomp_renderer", NativeX() ? "xenia" : "nativex");
+      status_ = "Renderer changes on the next launch.";
+      break;
     case kDisplayMode: {
       bool fs = !GetBool("fullscreen");
       SetBool("fullscreen", fs);
@@ -277,13 +376,46 @@ void GameMenu::Change(int row, int dir) {
       break;
     }
     case kRenderRes: {
+      if (NativeX()) {
+        if (!Has("native_x_renderer_resolution_scale")) return;
+        int i = (NxrScaleIndex() + dir + kNxrScaleCount) % kNxrScaleCount;
+        char buf[16];
+        std::snprintf(buf, sizeof buf, "%.1f", kNxrScales[i]);
+        SetStr("native_x_renderer_resolution_scale", buf);
+        status_ = "Render resolution changes on the next launch.";
+        break;
+      }
       int v = std::clamp(GetInt("resolution_scale"), 1, 3) - 1;
       v = (v + dir + 3) % 3;
       SetInt("resolution_scale", v + 1);
       status_ = "Render resolution changes on the next launch.";
       break;
     }
-    case kVsync: SetBool("vsync", !GetBool("vsync")); break;
+    case kAntiAlias: {
+      if (!NativeXRow("native_x_renderer_antialiasing")) return;
+      int i = (NxrAaIndex() + dir + kNxrAaCount) % kNxrAaCount;
+      SetStr("native_x_renderer_antialiasing", kNxrAaValues[i]);
+      status_ = "Anti-aliasing changes on the next launch.";
+      break;
+    }
+    case kCompileWait: {
+      if (!NativeXRow("native_x_renderer_scene_wait_ms")) return;
+      int i = (WaitIndex() + dir + kWaitCount) % kWaitCount;
+      char buf[16];
+      std::snprintf(buf, sizeof buf, "%.1f", kWaitValues[i]);
+      SetStr("native_x_renderer_scene_wait_ms", buf);
+      status_ = "Applies on the next launch.";
+      break;
+    }
+    case kScreenSync:
+      if (NativeX()) {
+        if (!Has("native_x_renderer_present_mode")) return;
+        int i = (SyncIndex() + dir + kSyncCount) % kSyncCount;
+        SetStr("native_x_renderer_present_mode", kSyncValues[i]);
+        break;
+      }
+      SetBool("vsync", !GetBool("vsync"));
+      break;
     case kAspect: SetBool("present_letterbox", !GetBool("present_letterbox")); break;
     case kFiltering: {
       int i = (AnisoIndex() + dir + kAnisoCount) % kAnisoCount;
@@ -297,6 +429,10 @@ void GameMenu::Change(int row, int dir) {
       break;
     }
     case kKeyboard: SetBool("mnk_mode", !GetBool("mnk_mode")); break;
+    case kLogFile:
+      SetBool("recomp_log", !GetBool("recomp_log"));
+      status_ = "Logging changes on the next launch.";
+      break;
     default: return;
   }
   Save();
@@ -362,8 +498,10 @@ void GameMenu::DrawMain(float scale) {
     if (i == sel_) p.Rect(rx, y - 4 * scale, rw, lh, kHighlight);
     p.Text(px + 20 * scale, y, MainLabel(i), i == sel_ ? kWhite : kGrey);
     if (IsOptionRow(i)) {
-      std::string v = "< " + MainValue(i) + " >";
-      p.Text(value_x, y, v.c_str(), kWhite);
+      std::string value = MainValue(i);
+      const bool inactive = value == kNativeXOnly || value == "-";
+      std::string v = inactive ? value : "< " + value + " >";
+      p.Text(value_x, y, v.c_str(), inactive ? kGrey : kWhite);
     } else if (i == kEditKeys) {
       p.Text(value_x, y, ">", kWhite);
     } else if (i == kQuit && i == sel_ && quit_armed_) {
