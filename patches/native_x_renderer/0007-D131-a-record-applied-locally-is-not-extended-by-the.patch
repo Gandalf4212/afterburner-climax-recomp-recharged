@@ -1,0 +1,46 @@
+From 0ac16a1c0b8928eb4c8a78db5389527fd1404fd7 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Sun, 8 Nov 2026 10:55:18 -0500
+Subject: [PATCH 7/7] D131: a record applied locally is not extended by the
+ next value
+
+---
+ docs/decisions.md | 10 ++++++++++
+ src/state.cpp     |  3 +++
+ 2 files changed, 13 insertions(+)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 1b70d7f..f07ebe4 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4417,3 +4417,13 @@ device call: the game calls setters while it fills them (first run read c36-c47
+ 
+ **Not yet:** the draws inside a recorded command buffer are not drawn by the renderer (the call is not a draw); the
+ tracker's state after it is right.
++
++## D131 — A record applied locally is not extended by the next value (2026-11-08, After Burner Climax)
++
++**What:** after the tracker applies its record to its own register file (the observer), the next register value
++starts a new kValues run instead of joining the last one.
++
++**Why:** with both the renderer (keep_record) and the observer (apply_locally) on, a value joined to an applied run
++grew that run's count, and the next ApplyRecord began at `applied_to_`, inside the run: it read a value as a run
++header and copied past the record's end (After Burner Climax, NativeX with --native_x_renderer_verify: access
++violation in memcpy under StateTracker::Gather).
+diff --git a/src/state.cpp b/src/state.cpp
+index 3547df5..8f59854 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -626,6 +626,9 @@ void StateTracker::Gather(const Pending& p, Call call, bool draw, const uint8_t*
+   if (apply_locally_) {
+     ApplyRecord(record_.data.data() + applied_to_, record_.data.size() - applied_to_, registers_->values);
+     applied_to_ = record_.data.size();
++    // D131: the next value starts a run of its own: joined to this applied one, the next ApplyRecord would start
++    // inside it (with the renderer keeping the record, the observer applying it: a count read from a value).
++    record_.values_at_ = SIZE_MAX;
+   }
+   if (!keep_record_) {
+     record_.Clear();
+-- 
+2.43.0
+

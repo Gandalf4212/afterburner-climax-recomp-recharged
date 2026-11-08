@@ -1,7 +1,7 @@
 From 9ae5093d3bf5fb574da89aaf6ec3e723122118df Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Sat, 7 Nov 2026 12:00:16 -0500
-Subject: [PATCH 2/6] Shader cache: one indexed file with SPIR-V, prepared
+Subject: [PATCH 2/7] Shader cache: one indexed file with SPIR-V, prepared
  before the game draws (D115)
 
 Adds shader_sources.h (finding a game's XDK shader objects, whole or split), a ready-made

@@ -1,7 +1,7 @@
 From 422bfa487022f04ae1f8f25fd1ca9f7bed2e0ed1 Mon Sep 17 00:00:00 2001
 From: Gandalf4212 <gandalf4212@gmail.com>
 Date: Sun, 8 Nov 2026 10:05:16 -0500
-Subject: [PATCH 6/6] D130: constants the game writes after
+Subject: [PATCH 6/7] D130: constants the game writes after
  BeginShaderConstantF4, and RunCommandBuffer tracked
 
 ---

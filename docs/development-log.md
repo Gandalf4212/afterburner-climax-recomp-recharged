@@ -122,7 +122,11 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 - [x] Second verify run (log 004, build 78968c0): 124 of 126 draws fully match (98.4 %, was 8.1 %). Left: one
       draw's VS c36-c47 read before the game filled them (it calls setters while filling): D130 now reads the filled
       packets before the next draw / clear / resolve / frame end / BeginShaderConstantF4 only.
-- [ ] NativeX renderer crash (log 005): shader cache fine (96 shaders, 206 translations, 0.1 s, 5 MB), then an
+- [x] Crash found with crash.txt (build 56d3649): StateTracker::Gather -> ApplyRecord memcpy, from
+      TakeFilledPackets in the BeginShaderConstantF4 hook; only with NativeX drawing AND verify on (log 005 had
+      "verify on"). Upstream latent bug: a value joined the already-applied kValues run, so the next ApplyRecord
+      began inside it. Fix D131 (patch 0007): reset `values_at_` after applying locally.
+- [x] (was) NativeX renderer crash (log 005): shader cache fine (96 shaders, 206 translations, 0.1 s, 5 MB), then an
       access violation in VCRUNTIME140+0x1c17b (memcpy/memmove) as the first tiled 1280x256 4x MSAA targets appear;
       no log line. Added `src/crash_handler.h` (unhandled-exception filter: code, address, stack unwound from the
       context, symbols from the shipped after_burner_climax.pdb; written to the log and crash.txt) and debug info
