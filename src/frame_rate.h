@@ -1,8 +1,8 @@
-// Frame rate (F1 > Display > Frame rate, cvar recomp_frame_rate: 60 or 120). After Burner Climax presents once
-// per guest vblank (~59 FPS at the SDK's 60 Hz), so the setting sets the guest vblank rate
-// (video_mode_refresh_rate). 120 is experimental: if the game steps its logic once per frame, it runs at double
-// speed. Also raises the Windows timer resolution to 1 ms (the SDK's 1 ms sleeps otherwise last ~15.6 ms).
-// Applied at start-up. Ported from mad-riders-recomp (which ran at 30).
+// Frame rate on screen (F1 > Display > Frame rate, cvar recomp_frame_rate: 60 or 120). The game always runs at its
+// own 60 FPS; 120 turns on NativeXRenderer's frame generation (FSR 3.1, native_x_renderer_frame_generation, D123):
+// a frame interpolated between each two of the game's, presented, never simulated. It needs NativeX with DLSS or
+// FSR 3.1 (the game's 3D view and motion vectors), not mapped for this game yet. The guest vblank rate is never
+// changed. Also raises the Windows timer resolution to 1 ms (steadier 60 FPS pacing). Applied at start-up.
 #pragma once
 
 namespace frame_rate {

@@ -19,7 +19,8 @@
 #include <rex/logging.h>
 
 REXCVAR_DEFINE_INT32(recomp_frame_rate, 60, "Recomp",
-                     "Frame rate: 60 (original) or 120 (experimental). Applies at start-up");
+                     "Frame rate on screen: 60 (the game's) or 120 (NativeX frame generation; gameplay stays 60). "
+                     "Applies at start-up");
 
 namespace frame_rate {
 
@@ -41,8 +42,14 @@ void apply() {
     fps = 60;
     rex::cvar::SetFlagByName("recomp_frame_rate", "60");
   }
-  rex::cvar::SetFlagByName("video_mode_refresh_rate", std::to_string(fps));
-  REXLOG_INFO("Frame rate: {} FPS (guest refresh {} Hz)", fps, fps);
+  // Only the presentation: the guest's vblank (and so the game's speed) is left alone.
+  for (const auto& e : rex::cvar::GetRegistry()) {
+    if (e.name == "native_x_renderer_frame_generation") {
+      rex::cvar::SetFlagByName("native_x_renderer_frame_generation", fps == 120 ? "true" : "false");
+      break;
+    }
+  }
+  REXLOG_INFO("Frame rate on screen: {} FPS (game 60)", fps);
 }
 
 }  // namespace frame_rate

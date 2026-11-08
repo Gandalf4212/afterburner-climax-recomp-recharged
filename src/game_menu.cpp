@@ -168,7 +168,7 @@ int SyncIndex() {
 }
 
 const int kFrameRates[] = {60, 120};
-const char* const kFrameRateLabels[] = {"60 FPS (original)", "120 FPS (experimental)"};
+const char* const kFrameRateLabels[] = {"60 FPS", "120 FPS (frame generation)"};
 const char* const kPerfLabels[] = {"Off", "FPS", "FPS, CPU, GPU", "FPS, CPU, GPU, frame times"};
 
 constexpr const char* kNativeXOnly = "(NativeX only)";
@@ -215,7 +215,8 @@ const char* MainNote(int row) {
                        : "Wait for the monitor refresh. Off can tear.";
     case kAspect: return "Keep 16:9 adds black bars on other window shapes.";
     case kFiltering: return "Sharper textures seen at an angle.";
-    case kFrameRate: return "120 is experimental: if the game speeds up, go back to 60. Next launch.";
+    case kFrameRate:
+      return "Screen updates only: the game always runs at 60. 120 adds generated frames (NativeX). Next launch.";
     case kPerfOverlay: return "Frame rate, CPU and GPU use, and a frame-time graph in the top-right corner.";
     case kAudioBuffer: return "Bigger fixes crackles and dropouts, smaller has less delay. Next launch.";
     case kKeyboard: return "Play with the keyboard as controller 1.";
@@ -267,7 +268,8 @@ std::string MainValue(int row) {
       return GetBool("vsync") ? "On" : "Off";
     case kAspect: return GetBool("present_letterbox") ? "Keep 16:9" : "Stretch to window";
     case kFiltering: return kAnisoLabels[AnisoIndex()];
-    case kFrameRate: return kFrameRateLabels[GetInt("recomp_frame_rate") == 120 ? 1 : 0];
+    case kFrameRate:
+      return NativeX() ? kFrameRateLabels[GetInt("recomp_frame_rate") == 120 ? 1 : 0] : kNativeXOnly;
     case kPerfOverlay: return kPerfLabels[std::clamp(GetInt("recomp_perf_overlay"), 0, 3)];
     case kAudioBuffer: return kAudioLabels[AudioIndex()];
     case kKeyboard: return GetBool("mnk_mode") ? "On" : "Off";
@@ -537,6 +539,7 @@ void GameMenu::Change(int row, int dir) {
     }
     case kKeyboard: SetBool("mnk_mode", !GetBool("mnk_mode")); break;
     case kFrameRate:
+      if (!NativeX()) return;
       SetInt("recomp_frame_rate", GetInt("recomp_frame_rate") == 120 ? 60 : 120);
       status_ = "Frame rate changes on the next launch.";
       break;

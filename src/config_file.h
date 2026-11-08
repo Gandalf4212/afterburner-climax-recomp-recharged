@@ -82,7 +82,7 @@ inline const ConfigSection kConfigSections[] = {
      }},
     {"Performance",
      {
-         {"recomp_frame_rate", "Frame rate: 60 (original) or 120 (experimental), next launch"},
+         {"recomp_frame_rate", "Frame rate on screen: 60, or 120 = NativeX frame generation (gameplay stays 60)"},
          {"recomp_perf_overlay", "Overlay: 0 off, 1 FPS, 2 FPS + CPU/GPU, 3 + frame-time graph"},
      }},
     {"Audio",
