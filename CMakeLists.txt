@@ -79,6 +79,19 @@ target_link_libraries(after_burner_climax PRIVATE native_x_renderer)
 target_compile_definitions(after_burner_climax PRIVATE ABC_NATIVE_X_RENDERER=1)
 native_x_renderer_copy_runtime(after_burner_climax)
 
+# Debug info (CodeView, shipped as after_burner_climax.pdb) for our code and NativeXRenderer only, so a crash report
+# (src/crash_handler.h) names functions and lines; the generated game code stays without it (size, link time).
+if(WIN32)
+    set_source_files_properties(src/main.cpp src/game_menu.cpp src/package_setup.cpp src/native_x_renderer_abc.cpp
+        src/shader_scan.cpp PROPERTIES COMPILE_OPTIONS "-g;-gcodeview")
+    foreach(_nxr_target native_x_renderer native_x_renderer_sdk)
+        if(TARGET ${_nxr_target})
+            target_compile_options(${_nxr_target} PRIVATE -g -gcodeview)
+        endif()
+    endforeach()
+    target_link_options(after_burner_climax PRIVATE "LINKER:/DEBUG:FULL" "LINKER:/OPT:REF" "LINKER:/OPT:ICF")
+endif()
+
 # CI passes the commit so logs say which build produced them.
 set(ABC_BUILD "" CACHE STRING "Build identifier shown in the log")
 if(ABC_BUILD)

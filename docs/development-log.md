@@ -119,6 +119,14 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       row closes). Controller 1 read with `InputSystem::GetStateForUI` (host `pad_buttons`). Display mode now
       Windowed / Borderless fullscreen / Fullscreen (SDK cvar `fullscreen_exclusive`; live, RefreshFullscreen when
       only the kind changes). Renderer row stays until NativeX is the only renderer (owner: remove it then).
+- [x] Second verify run (log 004, build 78968c0): 124 of 126 draws fully match (98.4 %, was 8.1 %). Left: one
+      draw's VS c36-c47 read before the game filled them (it calls setters while filling): D130 now reads the filled
+      packets before the next draw / clear / resolve / frame end / BeginShaderConstantF4 only.
+- [ ] NativeX renderer crash (log 005): shader cache fine (96 shaders, 206 translations, 0.1 s, 5 MB), then an
+      access violation in VCRUNTIME140+0x1c17b (memcpy/memmove) as the first tiled 1280x256 4x MSAA targets appear;
+      no log line. Added `src/crash_handler.h` (unhandled-exception filter: code, address, stack unwound from the
+      context, symbols from the shipped after_burner_climax.pdb; written to the log and crash.txt) and debug info
+      (CodeView) for src/ and NativeX only.
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

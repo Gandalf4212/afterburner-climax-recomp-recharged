@@ -1,23 +1,23 @@
-From 7cc39ea603f048859c515e4aeb45b6d1e62dc5c2 Mon Sep 17 00:00:00 2001
+From 422bfa487022f04ae1f8f25fd1ca9f7bed2e0ed1 Mon Sep 17 00:00:00 2001
 From: Gandalf4212 <gandalf4212@gmail.com>
 Date: Sun, 8 Nov 2026 10:05:16 -0500
 Subject: [PATCH 6/6] D130: constants the game writes after
  BeginShaderConstantF4, and RunCommandBuffer tracked
 
 ---
- docs/decisions.md                   | 15 +++++++++++++++
+ docs/decisions.md                   | 18 ++++++++++++++++++
  include/native_x_renderer/calls.inc |  6 ++++++
  src/internal.h                      |  3 +++
- src/native_x_renderer.cpp           |  4 ++++
+ src/native_x_renderer.cpp           | 10 ++++++++++
  src/state.cpp                       | 27 +++++++++++++++++++++++++++
  src/state.h                         | 10 ++++++++++
- 6 files changed, 65 insertions(+)
+ 6 files changed, 74 insertions(+)
 
 diff --git a/docs/decisions.md b/docs/decisions.md
-index f6aae9c..d4cf47b 100644
+index f6aae9c..1b70d7f 100644
 --- a/docs/decisions.md
 +++ b/docs/decisions.md
-@@ -4399,3 +4399,18 @@ the game's D3D writes into each vertex fetch, keyed by the shipped fetch instruc
+@@ -4399,3 +4399,21 @@ the game's D3D writes into each vertex fetch, keyed by the shipped fetch instruc
  shipped vertex shaders: 21 of 112 variants of a Xenia dump predicted (leave one out). The fetch's meaning is in the
  shader object's vertex element table (usage and index per fetch), not in the instruction; a key by usage would be
  the next attempt.
@@ -33,6 +33,9 @@ index f6aae9c..d4cf47b 100644
 +**Why:** After Burner Climax (XDK 9328), first verify run: render state, fetch, programs, bool/loop all matched, but
 +only 8 of 99 draws fully matched: the engine writes most float constants itself (12 sites through
 +`8224A530`), bypassing the device's shadow, and 576 draw packets came from recorded command buffers (`822496E0`).
++
++The packets are read before the next draw, clear, resolve, frame end or BeginShaderConstantF4, not before any
++device call: the game calls setters while it fills them (first run read c36-c47 of one draw before they were written).
 +
 +**Not yet:** the draws inside a recorded command buffer are not drawn by the renderer (the call is not a draw); the
 +tracker's state after it is right.
@@ -81,16 +84,22 @@ index e1f2a69..50478e2 100644
  
  struct CallInfo {
 diff --git a/src/native_x_renderer.cpp b/src/native_x_renderer.cpp
-index 125fece..e16de39 100644
+index 125fece..d68631a 100644
 --- a/src/native_x_renderer.cpp
 +++ b/src/native_x_renderer.cpp
-@@ -151,6 +151,10 @@ void Enter(Call call, PPCContext& ctx, uint8_t* base) {
+@@ -151,6 +151,16 @@ void Enter(Call call, PPCContext& ctx, uint8_t* base) {
      // tracked is handed on as an EndVertices before the next device call, if the game committed it.
      const internal::CallInfo& info = internal::Info(call);
      if (info.device || (info.flags & internal::kPackets)) {
-+      // D130: the constants the game wrote after its last BeginShaderConstantF4.
-+      if (const TrackedCall* filled = g_tracker->TakeFilledPackets(base)) {
-+        if (g_observer) observer::OnLeave(*filled, *g_tracker);
++      // D130: the constants the game wrote after its last BeginShaderConstantF4, read before the next call that
++      // uses them or ends the frame (the game may call setters while it fills them: After Burner Climax).
++      const bool uses_constants = (info.flags & (internal::kDraw | internal::kFrameEnd | internal::kFilledAfter |
++                                                 internal::kInlineBegin)) ||
++                                  call == Call::kResolve || call == Call::kClear || call == Call::kClearF;
++      if (uses_constants) {
++        if (const TrackedCall* filled = g_tracker->TakeFilledPackets(base)) {
++          if (g_observer) observer::OnLeave(*filled, *g_tracker);
++        }
 +      }
        if (const TrackedCall* tracked = g_tracker->TakeCommittedInlineDraw(base)) {
          uint64_t r3 = ctx.r3.u64;

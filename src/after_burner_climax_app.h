@@ -22,6 +22,7 @@
 #include <imgui.h>
 
 #include "config_file.h"
+#include "crash_handler.h"
 #include "exit_watchdog.h"
 #include "game_keys.h"
 #include "game_menu.h"
@@ -51,6 +52,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   // Default the game data folder to "assets" next to the exe, so the game
   // runs with a plain double-click. --game_data_root still overrides it.
   void OnConfigurePaths(rex::PathConfig& paths) override {
+    crash_handler::install(rex::filesystem::GetExecutableFolder());
     ApplyLogSwitch(paths.config_path);
     if (paths.game_data_root.empty()) {
       paths.game_data_root =
@@ -159,6 +161,8 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
 
   // The game must not see keys/buttons while the menu is open.
   void OnPostSetup() override {
+    // Again: SDL or a driver may have replaced the filter during set-up.
+    crash_handler::install(rex::filesystem::GetExecutableFolder());
 #ifdef ABC_NATIVE_X_RENDERER
     SetUpShaderCache();
     // Always initialized: with native_x_renderer off it only arms what --native_x_renderer_trace / _verify ask for.

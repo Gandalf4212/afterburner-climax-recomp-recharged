@@ -120,6 +120,8 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item out\after_burner_climax.exe dist\
+          # Symbols for crash reports (src/crash_handler.h reads them from the exe's folder).
+          if (Test-Path out\after_burner_climax.pdb) { Copy-Item out\after_burner_climax.pdb dist\ } else { Write-Warning "no pdb" }
           # SDK built from source: its DLLs (rexruntime, the GPU plugin, SDL...) may sit in subfolders.
           Get-ChildItem out -Recurse -Filter *.dll | Where-Object { $_.FullName -notmatch 'CMakeFiles' } |
             Where-Object { -not (Test-Path ("dist\" + $_.Name)) } | Copy-Item -Destination dist\
