@@ -1,0 +1,45 @@
+From 808f6a6ecb15d68a1be44d0c3a053a9c843ede04 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 18:51:42 -0500
+Subject: [PATCH] D134: a bin-predicated INDIRECT_BUFFER is followed
+ (RunCommandBuffer predicates every one)
+
+---
+ docs/decisions.md | 8 ++++++++
+ src/state.cpp     | 4 +++-
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index a06f8cd..e9030fc 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4450,3 +4450,11 @@ Cvar `native_x_renderer_recorded_draws` (default true).
+ Also, behind `native_x_renderer_predicated_constants` (default false, to test): bin-predicated SET_CONSTANT float
+ constant writes (BeginShaderConstantF4 inside a tiled pass predicates them) are applied in order like unpredicated ones;
+ before, they went to `predicated_writes` only and the tracker never applied them.
++
++## D134 — A bin-predicated INDIRECT_BUFFER is followed (2026-11-09, After Burner Climax)
++D133 did not show the jets: the verifier (frame 1305, jet selection) read 0 indirect buffers in 2870 tracked calls,
++while 228 GPU draw packets came from buffers outside the ring. `RunCommandBuffer` (822496E0) sets r27 = 1 (822499C0)
++and writes its INDIRECT_BUFFERs as `0xC0013F00 | 1` (82249B78): always bin-predicated. ScanPackets put every predicated
++non-draw packet aside (D130's predicated SET_CONSTANT branch), so the recorded buffers were never read and D133 had no
++draw points. Now a predicated INDIRECT_BUFFER is followed like an unpredicated one.
++SetShaderGPRAllocation (82243950) predicates its three with device+12892 the same way; they are state, now applied.
+diff --git a/src/state.cpp b/src/state.cpp
+index 826684d..52bd1ed 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -124,7 +124,9 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+           // touches); the draw is the same in every bin.
+           ++out.predicated;
+           ScanDraw(base, opcode, p, count, out);
+-        } else if (header & 1) {
++        } else if ((header & 1) && opcode != 0x3F) {
++          // A bin-predicated INDIRECT_BUFFER is followed below like any other (D134: RunCommandBuffer predicates
++          // every one, 0xC0013F01; the GPU runs the same buffer in each bin).
+           ++out.predicated;  // bin-predicated: per tile
+           if (opcode == 0x2D) {  // SET_CONSTANT
+             uint32_t ot = Load32(base, p);
+-- 
+2.43.0
+

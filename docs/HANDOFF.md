@@ -12,12 +12,14 @@ to Xenia; build 42503819109 (bedf762) is the first that forces NativeX. Deleting
 help. Log 007 (owner's F:\claude2\abc): every draw call drawn, 0 failed or skipped, so the jets' draws are either not
 draw calls NativeX sees or drawn with wrong state.
 
-## Session 3 (2026-11-09): jets fix written, to test
-NativeX D133 (patch 0009): `RunCommandBuffer`'s recorded draws are handed to the renderer one by one (cvar
-`native_x_renderer_recorded_draws`, default true). Option `native_x_renderer_predicated_constants` (default false)
-applies bin-predicated float SET_CONSTANTs (step 3 below). Owner: test the jet selection screen and a stage; if jets are
-still missing, set the predicated option to true in the toml; if anything breaks, set recorded_draws to false. Send the
-log (and an F10 verify capture on the selection screen if jets are still missing).
+## Session 3 (2026-11-09): jets, to test
+- D133 (patch 0009): RunCommandBuffer's recorded draws handed to the renderer one by one (cvar
+  `native_x_renderer_recorded_draws`, default true). Alone it changed nothing (log 008).
+- D134 (patch 0010): the real gap: RunCommandBuffer's INDIRECT_BUFFERs are always bin-predicated and the tracker
+  skipped them (verify: 0 indirect buffers read; 228 draw packets outside the ring). Now followed.
+- `native_x_renderer_predicated_constants` (default false): made the nozzles worse; leave it off.
+- Owner: test the jet selection screen and a stage with predicated_constants off; F10 verify capture if jets are still
+  missing ("packets read: ... indirect buffers" should now be > 0).
 
 ## Original plan (jets)
 1. Verify capture on the jet selection screen: `--recomp_log=true --native_x_renderer_verify=true`, F10 there
