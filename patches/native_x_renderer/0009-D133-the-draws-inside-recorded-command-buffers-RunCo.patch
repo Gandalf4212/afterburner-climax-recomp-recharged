@@ -1,0 +1,300 @@
+From b08fd27ef5363e4460dab884bc8e27410553b9dd Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 18:27:25 -0500
+Subject: [PATCH 9/9] D133: the draws inside recorded command buffers
+ (RunCommandBuffer) are drawn; predicated float constants optional
+
+---
+ docs/decisions.md         | 14 ++++++++++
+ src/native_x_renderer.cpp | 17 ++++++++++-
+ src/state.cpp             | 59 +++++++++++++++++++++++++++++++++++----
+ src/state.h               | 26 ++++++++++++++++-
+ 4 files changed, 109 insertions(+), 7 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 411faf3..a06f8cd 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4436,3 +4436,17 @@ it, at up to 60 frames per second. The poller now always runs (it also serves th
+ 
+ **Why:** After Burner Climax pauses the game while its settings menu is open by holding the game's threads; the
+ dialogs are drawn over the game's frames (D75), so without new frames the menu would not be drawn.
++
++## D133 — The draws inside recorded command buffers are drawn (2026-11-09, After Burner Climax)
++Under NativeX every jet was invisible (selection screen, stages, enemies) while scenery, exhaust and the HUD drew;
++the verifier reported every tracked draw call drawn. The jets are drawn from command buffers the game recorded:
++`RunCommandBuffer` (D130) flushes the inherited state, then writes an INDIRECT_BUFFER per recorded segment. The tracker
++read those packets as one non-draw call (~570 DRAW_INDX packets a frame counted, none handed on). Now each draw packet
++the scan reads marks a draw point (`PacketScan::draw_points`: sizes of writes, loads and shader loads); a
++`RunCommandBuffer` with draw points is handed on once per draw (`NextRecordedDraw`), each gathered as a non-draw call
++from the packets before it (the buffer carries its own state; the shadow is not read), then once more for the state
++after its last draw. INDIRECT_BUFFERs are followed two levels deep (the ring's, then those a recorded buffer calls).
++Cvar `native_x_renderer_recorded_draws` (default true).
++Also, behind `native_x_renderer_predicated_constants` (default false, to test): bin-predicated SET_CONSTANT float
++constant writes (BeginShaderConstantF4 inside a tiled pass predicates them) are applied in order like unpredicated ones;
++before, they went to `predicated_writes` only and the tracker never applied them.
+diff --git a/src/native_x_renderer.cpp b/src/native_x_renderer.cpp
+index e20c433..72e8d77 100644
+--- a/src/native_x_renderer.cpp
++++ b/src/native_x_renderer.cpp
+@@ -7,6 +7,7 @@
+ #include <native_x_renderer/hooks.h>
+ #include <native_x_renderer/native_x_renderer.h>
+ 
++#include <rex/cvar.h>
+ #include <rex/logging.h>
+ 
+ #include <atomic>
+@@ -20,6 +21,13 @@
+ #include "state.h"
+ #include "trace.h"
+ 
++REXCVAR_DEFINE_BOOL(native_x_renderer_recorded_draws, true, "NativeXRenderer",
++                    "The draws inside command buffers the game recorded (RunCommandBuffer) are drawn, each with the "
++                    "state its buffer wrote before it (D133)");
++REXCVAR_DEFINE_BOOL(native_x_renderer_predicated_constants, false, "NativeXRenderer",
++                    "Bin-predicated SET_CONSTANT float constant writes (inside tiled passes) are applied in order, "
++                    "like unpredicated ones (D133)");
++
+ #ifdef _WIN32
+ #ifndef WIN32_LEAN_AND_MEAN
+ #define WIN32_LEAN_AND_MEAN
+@@ -94,6 +102,11 @@ void Initialize(const Profile& profile, rex::system::IGraphicsSystem* graphics,
+     g_tracker->set_skip_empty_calls(!g_observer);
+     g_tracker->set_apply_locally(g_observer);
+     g_tracker->set_keep_record(g_renderer);
++    g_tracker->set_split_recorded_draws(REXCVAR_GET(native_x_renderer_recorded_draws));
++    StateTracker::set_apply_predicated_constants(REXCVAR_GET(native_x_renderer_predicated_constants));
++    REXLOG_INFO("[native_x_renderer] recorded command buffers' draws: {}; predicated float constants: {} (D133)",
++                REXCVAR_GET(native_x_renderer_recorded_draws) ? "drawn" : "not drawn",
++                REXCVAR_GET(native_x_renderer_predicated_constants) ? "applied" : "ignored");
+   }
+   detail::g_hooks_active = g_trace || g_observer || g_renderer;
+ }
+@@ -199,7 +212,9 @@ void Leave(Call call, PPCContext& ctx, uint8_t* base) {
+   bool nested = --t_depth > 0;
+   if (g_trace) trace::OnLeave(call, ctx, base);
+   if (g_tracker && t_tracked) {
+-    if (const TrackedCall* tracked = g_tracker->Leave(call, base, nested)) {
++    // D133: a RunCommandBuffer comes back once per draw it ran, then once for the state after its last draw.
++    for (const TrackedCall* tracked = g_tracker->Leave(call, base, nested); tracked;
++         tracked = g_tracker->NextRecordedDraw(base)) {
+       if (g_observer) observer::OnLeave(*tracked, *g_tracker);
+       if (g_renderer) renderer::OnLeave(*tracked, *g_tracker, ctx, base);
+     }
+diff --git a/src/state.cpp b/src/state.cpp
+index 8f59854..826684d 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -58,6 +58,9 @@ uint32_t ConstantBase(uint32_t type) {
+   }
+ }
+ 
++// D133: bin-predicated float constant writes applied (StateTracker::set_apply_predicated_constants).
++std::atomic<bool> g_apply_predicated_constants{false};
++
+ // DRAW_INDX (viz query token, then as DRAW_INDX_2) and DRAW_INDX_2 (VGT_DRAW_INITIATOR, then VGT_DMA_BASE
+ // and VGT_DMA_SIZE for DMA indices): the command processor writes these registers from the packet
+ // (ExecutePacketType3Draw). `p` is the first payload dword, `count` the payload size.
+@@ -72,6 +75,7 @@ void ScanDraw(const uint8_t* base, uint32_t opcode, uint32_t p, uint32_t count,
+     }
+   }
+   ++out.draws;
++  out.draw_points.push_back({out.writes.size(), out.loads.size(), out.shader_loads.size()});
+ }
+ 
+ // A draw's flush writes its dirty float constant groups and the bool and loop constants as packets; the tracker
+@@ -126,6 +130,12 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+             uint32_t ot = Load32(base, p);
+             uint32_t reg = ConstantBase((ot >> 16) & 0xFF) + (ot & 0x7FF);
+             for (uint32_t i = 1; i < count; ++i) out.predicated_writes.emplace_back(reg + i - 1, Load32(base, p + 4 * i));
++            // D133: float constants (BeginShaderConstantF4 inside a tiled pass predicates its SET_CONSTANT): the
++            // same values for every bin, applied in order.
++            if (g_apply_predicated_constants.load(std::memory_order_relaxed) && reg >= kFloatConstants &&
++                reg + count - 1 <= kFloatConstants + kFloatDwords && !SkippedConstants(skip_constants, reg, count - 1)) {
++              for (uint32_t i = 1; i < count; ++i) out.writes.emplace_back(reg + i - 1, Load32(base, p + 4 * i));
++            }
+           }
+         } else {
+           switch (opcode) {
+@@ -173,7 +183,9 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+               uint32_t target = PhysicalToVirtual(Load32(base, p));
+               uint32_t length = Load32(base, p + 4) & 0xFFFFF;
+               ++out.indirect;
+-              if (depth == 0) {
++              // D133: and one level more, for the command buffers the game recorded (RunCommandBuffer: the ring's
++              // INDIRECT_BUFFER per segment, then those the recorded buffer calls).
++              if (depth < 2) {
+                 ScanPackets(base, target, target + 4 * length, out, depth + 1, skip_constants, copy_microcode);
+               }
+               break;
+@@ -232,12 +244,15 @@ void PacketScan::Clear() {
+   loads.clear();
+   shader_loads.clear();
+   shader_ucode.clear();
++  draw_points.clear();
+   draws = indirect = predicated = 0;
+   complete = true;
+ }
+ 
+ const StateTracker::Program StateTracker::kNoProgram{};
+ 
++void StateTracker::set_apply_predicated_constants(bool on) { g_apply_predicated_constants.store(on); }
++
+ StateTracker::StateTracker(const Profile& profile)
+     : profile_(profile), registers_(std::make_unique<rex::graphics::RegisterFile>()) {
+   for (const auto& g : profile_.device.register_groups) {
+@@ -428,6 +443,12 @@ const TrackedCall* StateTracker::Leave(Call call, const uint8_t* base, bool nest
+     scan_.complete = false;
+   }
+ 
++  if (split_recorded_draws_ && call == Call::kRunCommandBuffer && !draw && !scan_.draw_points.empty()) {
++    // D133: its draws, one by one, then the state after the last one.
++    split_ = {true, std::move(p), end, 0, {}};
++    return NextRecordedDraw(base);
++  }
++
+   Gather(p, call, draw, base);
+ 
+   last_.call = call;
+@@ -439,6 +460,27 @@ const TrackedCall* StateTracker::Leave(Call call, const uint8_t* base, bool nest
+   return held ? nullptr : &last_;
+ }
+ 
++const TrackedCall* StateTracker::NextRecordedDraw(const uint8_t* base) {
++  Split& s = split_;
++  if (!s.pending) return nullptr;
++  const bool is_draw = s.next < scan_.draw_points.size();
++  PacketScan::DrawPoint to = is_draw ? scan_.draw_points[s.next++]
++                                     : PacketScan::DrawPoint{scan_.writes.size(), scan_.loads.size(),
++                                                             scan_.shader_loads.size()};
++  // Every register the recorded buffer needs is in its packets (the call's flush of the inherited state first):
++  // gathered as a non-draw's, not from the shadow.
++  Gather(s.p, Call::kRunCommandBuffer, false, base, s.from, to);
++  s.from = to;
++  if (!is_draw) s.pending = false;
++  last_.call = Call::kRunCommandBuffer;
++  last_.draw = is_draw;
++  last_.device = s.p.device;
++  last_.begin = GpuAddress(s.p.begin);
++  last_.end = GpuAddress(s.end);
++  last_.scan = &scan_;
++  return &last_;
++}
++
+ void RegisterRecord::Value(uint32_t reg, uint32_t value) {
+   if (values_at_ < data.size()) {
+     uint32_t count = data[values_at_] & 0xFFFFFF;
+@@ -510,7 +552,11 @@ void StateTracker::SendValue(uint32_t reg, uint32_t value) {
+   record_.Value(reg, value);
+ }
+ 
+-void StateTracker::Gather(const Pending& p, Call call, bool draw, const uint8_t* base) {
++void StateTracker::Gather(const Pending& p, Call call, bool draw, const uint8_t* base, PacketScan::DrawPoint from,
++                          PacketScan::DrawPoint to) {
++  to.writes = std::min(to.writes, scan_.writes.size());
++  to.loads = std::min(to.loads, scan_.loads.size());
++  to.shader_loads = std::min(to.shader_loads, scan_.shader_loads.size());
+   const DeviceLayout& d = profile_.device;
+   const uint8_t* device = GuestPointer(base, p.device);
+   auto shadow = [&](uint32_t offset) { return Load32(base, p.device + offset); };
+@@ -550,7 +596,8 @@ void StateTracker::Gather(const Pending& p, Call call, bool draw, const uint8_t*
+     }
+   }
+ 
+-  for (const auto& [reg, value] : scan_.writes) {
++  for (size_t w = from.writes; w < to.writes; ++w) {
++    const auto& [reg, value] = scan_.writes[w];
+     if (reg >= rex::graphics::RegisterFile::kRegisterCount) continue;
+     if (reg >= kFloatConstants && reg < kFloatConstants + kFloatDwords) {
+       // A draw's float constant writes are its flush, taken from the shadow above (and left out of its scan).
+@@ -570,10 +617,12 @@ void StateTracker::Gather(const Pending& p, Call call, bool draw, const uint8_t*
+       SendValue(reg, value);
+     }
+   }
+-  for (const auto& [reg, value] : scan_.loads) {
++  for (size_t l = from.loads; l < to.loads; ++l) {
++    const auto& [reg, value] = scan_.loads[l];
+     if (reg < rex::graphics::RegisterFile::kRegisterCount) SendValue(reg, value);
+   }
+-  for (const auto& load : scan_.shader_loads) {
++  for (size_t s = from.shader_loads; s < to.shader_loads; ++s) {
++    const auto& load = scan_.shader_loads[s];
+     if (load.type >= 2) continue;
+     // One shared copy per program: the renderer's thread may still draw with the one before (D71). A program
+     // loaded before is taken from the cache, without a copy.
+diff --git a/src/state.h b/src/state.h
+index 989406b..4789d9c 100644
+--- a/src/state.h
++++ b/src/state.h
+@@ -102,6 +102,12 @@ struct PacketScan {
+   // A load read when its call returns, whose microcode is still in guest memory at its address: not copied (D72).
+   static constexpr uint32_t kInGuestMemory = UINT32_MAX;
+   uint32_t draws = 0, indirect = 0, predicated = 0;
++  // D133: where each draw packet ends, as sizes of writes, loads and shader_loads: a recorded command buffer's
++  // draws (RunCommandBuffer) are split there and handed on one by one, each with the state written before it.
++  struct DrawPoint {
++    size_t writes = 0, loads = 0, shader_loads = 0;
++  };
++  std::vector<DrawPoint> draw_points;
+   bool complete = true;  // every byte between the call's start and end was read as packets
+ 
+   void Clear();
+@@ -132,6 +138,10 @@ class StateTracker {
+   // which only write the device's shadow (GRAW: about 16,700 of 19,000). Off for a consumer that wants every
+   // call (the observer's verification).
+   void set_skip_empty_calls(bool skip) { skip_empty_calls_ = skip; }
++  // D133: the draws inside the command buffers RunCommandBuffer runs are handed on as draws (NextRecordedDraw).
++  void set_split_recorded_draws(bool on) { split_recorded_draws_ = on; }
++  // D133: bin-predicated SET_CONSTANT float constant writes are applied in order, like unpredicated ones.
++  static void set_apply_predicated_constants(bool on);
+ 
+   void Enter(Call call, uint32_t device, const uint8_t* base, bool nested);
+   // The finished call if it was an outermost device call, else nullptr. Valid until the next Leave.
+@@ -145,6 +155,9 @@ class StateTracker {
+   // The last kFilledAfter call (BeginShaderConstantF4, D130), whose Leave returned nullptr, read now that the game
+   // has filled its packets; nullptr when none waits. Called before the next device call.
+   const TrackedCall* TakeFilledPackets(const uint8_t* base);
++  // D133: after a Leave that returned the first draw of a RunCommandBuffer (split_recorded_draws), its next draw,
++  // then the state after its last draw as a non-draw call; nullptr when nothing is left. Called right after Leave.
++  const TrackedCall* NextRecordedDraw(const uint8_t* base);
+ 
+   // The GPU state after the last finished call (in a draw's Leave, the state that draw runs with), with
+   // set_apply_locally on.
+@@ -204,7 +217,9 @@ class StateTracker {
+ 
+   // The registers a finished call changed, into record_ (applied to the tracker's own file too with
+   // apply_locally_), and its programs.
+-  void Gather(const Pending& p, Call call, bool draw, const uint8_t* base);
++  // D133: only the scan's writes, loads and shader loads in [from, to).
++  void Gather(const Pending& p, Call call, bool draw, const uint8_t* base, PacketScan::DrawPoint from = {},
++              PacketScan::DrawPoint to = {SIZE_MAX, SIZE_MAX, SIZE_MAX});
+   // Into record_: the shadow's dwords [first, first + count) that differ from image_, by blocks of 16.
+   void Send(uint32_t first_register, const uint8_t* source, uint32_t count);
+   // Into record_: a value written by a packet, if it differs from image_.
+@@ -242,6 +257,7 @@ class StateTracker {
+   std::array<const Program*, 256> recent_programs_{};
+   uint32_t last_device_ = 0;  // the device of the last device call (for kPackets calls)
+   bool skip_empty_calls_ = false;
++  bool split_recorded_draws_ = false;
+   // The dirty masks of the last BeginVertices / BeginIndexedVertices, for the EndVertices that draws it. With the
+   // profile's inline_draw_end (D77): the last dword of the begin's packets, where an inlined EndVertices moves the
+   // write pointer (0 when no tracked draw waits for it).
+@@ -260,6 +276,14 @@ class StateTracker {
+     Pending p;
+     uint32_t end = 0;
+   } filled_;
++  // D133: the RunCommandBuffer being handed on draw by draw.
++  struct Split {
++    bool pending = false;
++    Pending p;
++    uint32_t end = 0;
++    size_t next = 0;               // the next draw point
++    PacketScan::DrawPoint from{};  // where the next part starts
++  } split_;
+   PacketScan scan_;
+   TrackedCall last_;
+ };
+-- 
+2.43.0
+

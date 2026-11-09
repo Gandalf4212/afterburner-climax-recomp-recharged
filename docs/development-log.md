@@ -159,6 +159,13 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       queue's poller re-presents the last frame with the dialogs at up to 60 FPS.
 - [ ] Jets invisible under NativeX (found when NativeX became the only renderer; earlier "working" builds ran Xenia
       by default). Menu widened (em*64, value column 56 %): long values overran it. See HANDOFF for the plan.
+- [ ] Jets fix, NativeX D133 (patch 0009), to test: the tracker read `RunCommandBuffer` (822496E0) as one non-draw
+      call, so the DRAW_INDX packets of the game's recorded command buffers (~570 a frame) were counted and never
+      drawn; log 007 showed only direct draws (241-273 per frame, all drawn). Now each draw packet in the scan is a
+      split point and the call is handed on draw by draw, each with the packet state before it; INDIRECT_BUFFERs
+      followed two levels. Cvars: `native_x_renderer_recorded_draws` (true), `native_x_renderer_predicated_constants`
+      (false; HANDOFF step 3, applies bin-predicated float SET_CONSTANTs). Checked with a syntax-only compile of
+      state.cpp against stub headers; not built yet.
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

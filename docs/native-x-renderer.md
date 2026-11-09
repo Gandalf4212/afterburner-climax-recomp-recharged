@@ -92,6 +92,8 @@ compiled when first drawn and kept. Draws wait up to 8 ms per frame for those (F
 | 0005 | Decision numbers of 0002-0004 moved to D127-D129 (upstream uses D115-D117) |
 | 0006 | D130: BeginShaderConstantF4 (constants the game writes after the call) and RunCommandBuffer |
 | 0007 | D131: the tracker's record is not extended across an applied run (crash with the renderer and verifier both on) |
+| 0008 | D132: SetPaused, the last frame is presented again while the game is paused |
+| 0009 | D133: the draws inside recorded command buffers (RunCommandBuffer) are drawn; optional predicated float constants |
 
 To change NativeX: `git -C thirdparty/native_x_renderer checkout bf965e9 && git am ../../patches/native_x_renderer/*`,
 commit, then `git format-patch bf965e9..HEAD -o ../../patches/native_x_renderer` (replace the old files).
