@@ -171,6 +171,8 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 - [ ] D134 (patch 0010): RunCommandBuffer writes its INDIRECT_BUFFERs bin-predicated (r27 = 1 at 822499C0, header
       0xC0013F01 at 82249B78); ScanPackets ignored predicated non-draw packets, so D133 never saw the recorded
       buffers. Predicated INDIRECT_BUFFERs are now followed. To test.
+- [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
+      "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
       `docs/integrating-a-game.md`, `docs/xdk-d3d-reference.md`; Mad Riders' table in its
       `docs/native-x-renderer.md`), trace/verify runs on the owner's PC.

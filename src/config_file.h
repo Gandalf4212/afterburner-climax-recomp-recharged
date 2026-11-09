@@ -1,4 +1,4 @@
-// Writes after_burner_climax.toml: the banner, every setting the F1 menu offers
+// Writes after_burner_climax.toml: the banner, every setting the F1 menu offers and the renderer test switches
 // (always listed, with a comment, even at its default value), then any other
 // setting changed from its default (key binds etc.).
 //
@@ -66,6 +66,13 @@ inline const ConfigSection kConfigSections[] = {
          {"native_x_renderer_present_mode",
           "Screen sync: \"\" = fast, no tearing; \"vsync\"; \"immediate\" (G-Sync/FreeSync)"},
          {"anisotropic_override", "Texture filtering: -1 game default, 0 off, 2 = 2x, 3 = 4x, 4 = 8x, 5 = 16x"},
+     }},
+    {"Renderer (testing)",
+     {
+         {"native_x_renderer_recorded_draws",
+          "true = draw the game's recorded command buffers (jets, D133/D134; default), false = skip them"},
+         {"native_x_renderer_predicated_constants",
+          "true = apply tile-predicated shader constants (D133 test; worse nozzles), false = ignore (default)"},
      }},
     {"Performance",
      {
