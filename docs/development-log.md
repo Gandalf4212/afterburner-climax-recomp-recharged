@@ -188,6 +188,10 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       intro effects wrong. Log 008's verifier: the same recorded packets run up to 12x a frame with different VS
       constants (4, 25, 26, 99, 108). D137 (patch 0013): the constants the game fills after BeginShaderConstantF4
       (each jet's matrices) are read before RunCommandBuffer, not after its draws.
+- [ ] Log 013 + Snap1/Snap2 (D137, both switches on): the player jet draws as a huge grey shape over the lower
+      screen with black nozzle discs (wrong transform, no texture); "Unknown ALU scalar operation" (vertex
+      DCAD7A87DA7CAC0C, not from an indirect buffer) and "primitive type 0" again. D138 (patch 0014): the verifier
+      matches and compares the replayed draws, to find which state is wrong.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

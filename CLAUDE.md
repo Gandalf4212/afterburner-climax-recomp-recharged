@@ -20,6 +20,6 @@ Read `docs/HANDOFF.md` first (current state, next steps), then `docs/architectur
 - Game: After Burner Climax, World release, default.xex 0.0.1.2, SHA-1 a066b2d6..., XDK 2.0.9328.
 - ReXGlue SDK v0.10.1 built from source + `patches/rexglue-sdk` (git am) + `patches/ffmpeg` (in thirdparty/FFmpeg).
 - NativeXRenderer (the only renderer) submodule `thirdparty/native_x_renderer` at upstream bf965e9 +
-  `patches/native_x_renderer` 0001-0013 (git am; shader cache D127-D129, D130-D137). Editing them: see the end of
+  `patches/native_x_renderer` 0001-0014 (git am; shader cache D127-D129, D130-D138). Editing them: see the end of
   `docs/native-x-renderer.md`.
 - Codegen (Linux): clang 18 needs `-D__cpp_concepts=202002L -Wno-builtin-macro-redefined`; see the log.

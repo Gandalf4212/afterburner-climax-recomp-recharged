@@ -98,6 +98,7 @@ compiled when first drawn and kept. Draws wait up to 8 ms per frame for those (F
 | 0011 | D135: D134 behind `native_x_renderer_predicated_indirect` (default off); indirect buffers and their shader loads logged |
 | 0012 | D136: diagnostics: new programs from indirect buffers, a summary of each predicated indirect buffer |
 | 0013 | D137: constants filled after BeginShaderConstantF4 are read before RunCommandBuffer |
+| 0014 | D138: the verifier checks draws replayed from recorded command buffers |
 
 To change NativeX: `git -C thirdparty/native_x_renderer checkout bf965e9 && git am ../../patches/native_x_renderer/*`,
 commit, then `git format-patch bf965e9..HEAD -o ../../patches/native_x_renderer` (replace the old files).

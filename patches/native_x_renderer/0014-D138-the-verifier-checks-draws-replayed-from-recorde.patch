@@ -1,0 +1,174 @@
+From fe103b3df1c4706a8a55a121ea1798c4f0b7198e Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 20:20:21 -0500
+Subject: [PATCH] D138: the verifier checks draws replayed from recorded
+ command buffers
+
+---
+ docs/decisions.md |  8 ++++++++
+ src/observer.cpp  | 37 +++++++++++++++++++++++++++++++++++++
+ src/state.cpp     |  6 +++++-
+ src/state.h       |  3 +++
+ 4 files changed, 53 insertions(+), 1 deletion(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 006e34d..f1eafc4 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4486,3 +4486,11 @@ BeginShaderConstantF4 (bin-predicated SET_CONSTANT, D130) and then calls RunComm
+ packets only before draws, clears, resolves and frame ends, so a replay's draws took the previous jet's (or stale)
+ constants and the filled ones were applied after them (log 012, predicated_constants on: grey thrust, other effects
+ wrong). RunCommandBuffer now takes the filled packets first.
++
++## D138 — The verifier checks replayed draws (2026-11-09)
++Log 013 (D137, predicated_indirect and predicated_constants on): the jet now draws as a huge grey shape filling the
++lower screen, nozzles black; a bad vertex shader (DCAD7A87DA7CAC0C) again, not from an indirect buffer. To compare
++the replays' rebuilt state with the command processor's, each replayed draw (D133) carries the GPU address of its
++draw packet (`TrackedCall::packet`); the observer keeps its snapshots by that address and matches each GPU execution
++of an external draw packet to the replay of that packet with the fewest executions so far (tiles run the replays in
++order). Mismatches go to the usual lists; a "D138:" line counts replays tracked, executions matched and clean ones.
+diff --git a/src/observer.cpp b/src/observer.cpp
+index 9d4d7da..2ce74e7 100644
+--- a/src/observer.cpp
++++ b/src/observer.cpp
+@@ -168,6 +168,9 @@ uint64_t g_gpu_before = 0, g_gpu_after = 0;
+ uint32_t g_last_window_draw = 0;  // address of the last draw packet the GPU ran inside the window
+ std::vector<Unmatched> g_unmatched;
+ std::vector<Unmatched> g_external;
++// D138: draws replayed from recorded command buffers, by the GPU address of their draw packet, in order; and counts.
++std::map<uint32_t, std::vector<std::unique_ptr<Snapshot>>> g_replays;
++uint64_t g_replay_snapshots = 0, g_replay_matched = 0, g_replay_clean = 0, g_replay_first = 0;
+ uint64_t g_gpu_draws = 0, g_matched_executions = 0, g_draws_clean = 0, g_unanalyzed = 0;
+ std::map<uint32_t, MismatchStat> g_register_mismatch, g_vertex_fetch_mismatch, g_texture_fetch_mismatch,
+     g_vs_constant_mismatch, g_ps_constant_mismatch, g_bool_mismatch, g_loop_mismatch, g_tile_difference;
+@@ -363,6 +366,24 @@ void OnGpuDraw(void* /*user*/, const rex::system::GpuDrawInfo& info) {
+   if (address < g_region_low || address >= g_region_high) {
+     // Another buffer, called from the ring (INDIRECT_BUFFER).
+     if (g_gpu_phase == GpuPhase::kInside) {
++      // D138: the oldest replay of this packet with the fewest executions (tiles run the replays in order).
++      auto it = g_replays.find(address);
++      if (it != g_replays.end() && !it->second.empty()) {
++        Snapshot* best = nullptr;
++        for (auto& s : it->second) {
++          if (!best || s->executions < best->executions) best = s.get();
++        }
++        bool first = best->executions == 0;
++        uint64_t clean = g_draws_clean;
++        Compare(*best, info);
++        ++g_replay_matched;
++        if (first) {
++          ++g_replay_first;
++          g_replay_clean += g_draws_clean - clean;
++          g_draws_clean = clean;  // reported apart from the ring's draws
++        }
++        return;
++      }
+       g_external.push_back({address, r[kVgtDrawInitiator], r[0x2000], r[0x2001], r[0x2002], r[kRbModeControl],
+                             info.vertex_shader_hash, info.pixel_shader_hash, g_last_window_draw});
+     }
+@@ -444,6 +465,9 @@ void Report() {
+                   g_gpu_draws, g_gpu_phase == GpuPhase::kAfter ? "finished" : "did NOT finish", g_gpu_before,
+                   g_gpu_after, g_matched_executions, g_draws_clean, first_executions,
+                   first_executions ? 100.0 * g_draws_clean / first_executions : 0.0, g_unmatched.size(), g_unanalyzed));
++  log(fmt::format("D138: replayed draws (RunCommandBuffer): {} tracked, {} GPU executions matched; {} of {} fully "
++                  "match the rebuilt state (mismatches below include them)",
++                  g_replay_snapshots, g_replay_matched, g_replay_clean, g_replay_first));
+   log(fmt::format("packets read: {} calls ({} not fully), {} indirect buffers, {} literal vec4 loads",
+                   g_scanned_calls, g_truncated_scans, g_indirect_buffers, g_literal_loads));
+ 
+@@ -523,6 +547,8 @@ void Reset() {
+   g_segments.clear();
+   g_region_low = UINT32_MAX, g_region_high = 0;
+   g_external.clear();
++  g_replays.clear();
++  g_replay_snapshots = g_replay_matched = g_replay_clean = g_replay_first = 0;
+   g_last_window_draw = 0;
+   g_gpu_phase = GpuPhase::kBefore;
+   g_gpu_before = g_gpu_after = 0;
+@@ -575,6 +601,17 @@ void OnLeave(const TrackedCall& tracked, const StateTracker& tracker) {
+   g_literal_loads += tracked.scan->loads.size() / 4;
+   g_ranges.push_back({tracked.begin, tracked.end, tracked.call});
+   AddToWindow(tracked.begin, tracked.end);
++  if (tracked.draw && tracked.packet) {
++    // D138: a replayed draw: matched to the GPU's executions of its packet, in order.
++    auto s = BuildSnapshot(tracked.call, tracker);
++    s->sequence = g_sequence++;
++    s->frame = g_current_frame;
++    s->begin = s->end = tracked.packet;
++    s->scan_truncated = !tracked.scan->complete;
++    g_replays[tracked.packet].push_back(std::move(s));
++    ++g_replay_snapshots;
++    return;
++  }
+   if (tracked.draw) {
+     auto s = BuildSnapshot(tracked.call, tracker);
+     s->sequence = g_sequence++;
+diff --git a/src/state.cpp b/src/state.cpp
+index 9897635..125a736 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -83,7 +83,7 @@ void ScanDraw(const uint8_t* base, uint32_t opcode, uint32_t p, uint32_t count,
+     }
+   }
+   ++out.draws;
+-  out.draw_points.push_back({out.writes.size(), out.loads.size(), out.shader_loads.size()});
++  out.draw_points.push_back({out.writes.size(), out.loads.size(), out.shader_loads.size(), p - 4});
+ }
+ 
+ // A draw's flush writes its dirty float constant groups and the bool and loop constants as packets; the tracker
+@@ -409,6 +409,7 @@ const TrackedCall* StateTracker::TakeCommittedInlineDraw(const uint8_t* base) {
+     return nullptr;
+   }
+   last_.call = Call::kEndVertices;
++  last_.packet = 0;
+   return &last_;
+ }
+ 
+@@ -426,6 +427,7 @@ const TrackedCall* StateTracker::TakeFilledPackets(const uint8_t* base) {
+   Gather(p, filled_.call, false, base);
+   last_.call = filled_.call;
+   last_.draw = false;
++  last_.packet = 0;
+   last_.device = p.device;
+   last_.begin = GpuAddress(p.begin);
+   last_.end = GpuAddress(end);
+@@ -486,6 +488,7 @@ const TrackedCall* StateTracker::Leave(Call call, const uint8_t* base, bool nest
+ 
+   last_.call = call;
+   last_.draw = draw;
++  last_.packet = 0;
+   last_.device = p.device;
+   last_.begin = GpuAddress(p.begin);
+   last_.end = GpuAddress(end);
+@@ -507,6 +510,7 @@ const TrackedCall* StateTracker::NextRecordedDraw(const uint8_t* base) {
+   if (!is_draw) s.pending = false;
+   last_.call = Call::kRunCommandBuffer;
+   last_.draw = is_draw;
++  last_.packet = is_draw ? GpuAddress(to.packet) : 0;
+   last_.device = s.p.device;
+   last_.begin = GpuAddress(s.p.begin);
+   last_.end = GpuAddress(s.end);
+diff --git a/src/state.h b/src/state.h
+index 88e209b..4c41a96 100644
+--- a/src/state.h
++++ b/src/state.h
+@@ -107,6 +107,7 @@ struct PacketScan {
+   // draws (RunCommandBuffer) are split there and handed on one by one, each with the state written before it.
+   struct DrawPoint {
+     size_t writes = 0, loads = 0, shader_loads = 0;
++    uint32_t packet = 0;  // D138: CPU address of the draw packet
+   };
+   std::vector<DrawPoint> draw_points;
+   bool complete = true;  // every byte between the call's start and end was read as packets
+@@ -123,6 +124,8 @@ struct TrackedCall {
+   // new segment has begin > end, or a range much longer than its packets.
+   uint32_t begin = 0, end = 0;
+   const PacketScan* scan = nullptr;
++  // D138: a draw replayed from a recorded command buffer (RunCommandBuffer): GPU address of its draw packet.
++  uint32_t packet = 0;
+ };
+ 
+ class StateTracker {
+-- 
+2.43.0
+
