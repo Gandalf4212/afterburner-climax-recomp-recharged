@@ -101,6 +101,7 @@ compiled when first drawn and kept. Draws wait up to 8 ms per frame for those (F
 | 0014 | D138: the verifier checks draws replayed from recorded command buffers |
 | 0015 | D139: a recorded buffer's predicated SET_CONSTANTs are applied (but the per-tile window registers) |
 | 0016 | D140: bin predication (mask & select) evaluated inside recorded buffers |
+| 0017 | D141: the verifier compares replayed draws' float constants without shader analysis |
 
 To change NativeX: `git -C thirdparty/native_x_renderer checkout bf965e9 && git am ../../patches/native_x_renderer/*`,
 commit, then `git format-patch bf965e9..HEAD -o ../../patches/native_x_renderer` (replace the old files).

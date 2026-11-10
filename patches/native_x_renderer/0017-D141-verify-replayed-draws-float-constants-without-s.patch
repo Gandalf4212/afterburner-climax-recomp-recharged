@@ -1,0 +1,47 @@
+From ea87a08fc5502476bc91ebac37d2a86e64629708 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 21:19:15 -0500
+Subject: [PATCH] D141: verify replayed draws' float constants without shader
+ analysis
+
+---
+ docs/decisions.md | 6 ++++++
+ src/observer.cpp  | 7 +++++--
+ 2 files changed, 11 insertions(+), 2 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 5f853b8..76e9c6d 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4512,3 +4512,9 @@ SELECT_LO = 0xFFFFFFFF, SELECT_HI = 0, and RunCommandBuffer writes SET_BIN_SELEC
+ and select from the packets it reads (0x60-0x63; all bins until set) and, inside indirect buffers, reads a
+ predicated SET_CONSTANT or draw, and follows a predicated INDIRECT_BUFFER, only when the predicate passes. The
+ per-tile SELECT_LO the primary ring sets (8225C5C0) is not seen: every tile passes.
++
++## D141 — The verifier compares a replayed draw's float constants without the shader's analysis (2026-11-09)
++Log 016 (D140): 76 of 76 replayed draws and 236 of 236 calls fully match, yet no jet; but "VS float constant mismatches
++(0 compared)": the SDK analyzes no shaders when NativeX is the only renderer (598 without analysis), so the float
++constants (the jets' matrices) were never compared, in any log. A replayed draw without a constant map is now compared
++over the whole 256-vec4 VS and PS windows.
+diff --git a/src/observer.cpp b/src/observer.cpp
+index 2ce74e7..9873d56 100644
+--- a/src/observer.cpp
++++ b/src/observer.cpp
+@@ -267,9 +267,12 @@ void Compare(Snapshot& s, const rex::system::GpuDrawInfo& info) {
+   g_constant_windows.emplace(r[kSqVsConst], r[kSqPsConst]);
+   auto compare_constants = [&](const ConstantMap* map, uint32_t window, std::map<uint32_t, MismatchStat>& stats,
+                                uint64_t& compared, const char* stage) {
+-    if (!map) return;
++    // D141: a replayed draw (D138) without the shader's analysis (NativeX only: the SDK analyzes no shaders) is
++    // compared over all 256 constants of the window: its buffer writes what it needs.
++    const bool all = !map && s.call == Call::kRunCommandBuffer;
++    if (!map && !all) return;
+     for (uint32_t c = 0; c < 256; ++c) {
+-      if (!map->float_dynamic_addressing && !Bit(map->float_bitmap, c)) continue;
++      if (!all && !map->float_dynamic_addressing && !Bit(map->float_bitmap, c)) continue;
+       ++compared;
+       uint32_t vec4 = (window + c) % kFloatVec4;
+       for (uint32_t j = 0; j < 4; ++j) {
+-- 
+2.43.0
+

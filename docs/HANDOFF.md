@@ -27,6 +27,7 @@ draw calls NativeX sees or drawn with wrong state.
 - Log 013: the jet draws, wrong (grey, huge). D138 (0014): verify capture now covers replays ("D138:" line).
 - Log 014: replays verified; RB_COLOR_MASK wrong (predicated state in recorded buffers). D139 (0015) applies it.
 - Log 015: 46/76 replays clean; D140 (0016) evaluates bin predication (mask & select) in recorded buffers.
+- Log 016: 76/76 replays clean but constants never verified; D141 (0017) compares them.
 - Then: owner runs once with predicated_indirect = true (log). Compare the D135 shader-load lines with the failing
   hash: the bad microcode's packet, address and size show what is misread (a load that is not a program, a start
   offset, a nested buffer, a stale address). Suspects: the IM_LOAD start field (shared instruction memory),
