@@ -267,6 +267,11 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       every predicated packet in recorded buffers and RunCommandBuffer's INDIRECT_BUFFERs. Also seen in the dump:
       a mid-scene Resolve of 1280x720 (#1041, from 8217235C) and the trace's SetRenderTarget argument names are off
       (surface=0x1/0x2: the hook's r5 is not the surface; rt0 in the draw state is right).
+- [x] Session 4, D148 result (logs 027 normal, 028 all_bins): in 027 not one draw or predicated INDIRECT_BUFFER was
+      dropped by bin predication (no D148 count line at all), so predication is not why the ground is missing. With
+      `native_x_renderer_all_bins = true` (028) the player's jet vanished at the stage start and much else broke:
+      the predicated state inside recorded buffers really selects variants (D140 holds). Keep all_bins off; the
+      counter stays as a check. Next: F10 verify on stage 3 (do the ground's draws match the GPU?).
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
