@@ -149,6 +149,14 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     style.dim = 0xFFD2AC96;           // (150, 172, 210)
     style.done = 0xFF5AD2FF;          // gold (255, 210, 90)
     shader_cache_screen_ = std::make_unique<native_x_renderer::ShaderCacheScreen>(drawer, style);
+    // The gamepad's Select (Back) opens and closes the settings menu, like F1 (owner's request).
+    // Deferred: the watcher runs while the dialogs are drawn, and the toggle adds or removes the menu's dialog.
+    pad_watcher_ = std::make_unique<PadWatcher>(drawer, [this] {
+      app_context().CallInUIThreadDeferred([this] {
+        if (menu_ && menu_->capturing()) return;  // rebinding a key: the press is the menu's
+        ToggleMenu();
+      });
+    }, [this] { return ReadPadForUI(); });
     rex::ui::RegisterBind("bind_menu", "F1", "Open/close the settings menu",
                           [this] { ToggleMenu(); });
     rex::ui::RegisterBind("bind_menu_alt", "Escape", "Open/close the settings menu",
@@ -225,6 +233,24 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     recomp_ui::g_log_forced_off = true;
   }
 
+  // Controller 1's buttons for the UI, read even while the game sees a neutral pad (the menu, the Select toggle).
+  uint16_t ReadPadForUI() {
+      auto* input = runtime() ? static_cast<rex::input::InputSystem*>(runtime()->input_system()) : nullptr;
+      if (!input) return 0;
+      rex::input::X_INPUT_STATE state{};
+      if (input->GetStateForUI(0, &state) != 0) return 0;
+      uint16_t buttons = uint16_t(state.gamepad.buttons);
+      // The left stick's up and down act as the D-pad's (owner's request). Hysteresis: pressed past half the
+      // throw, released under 30 %, so a resting stick does not chatter.
+      static bool stick_up = false, stick_down = false;
+      const int ly = int16_t(state.gamepad.thumb_ly);  // up is positive
+      stick_up = stick_up ? ly > 9830 : ly > 16384;
+      stick_down = stick_down ? ly < -9830 : ly < -16384;
+      if (stick_up) buttons |= 0x0001;    // X_INPUT_GAMEPAD_DPAD_UP
+      if (stick_down) buttons |= 0x0002;  // X_INPUT_GAMEPAD_DPAD_DOWN
+      return buttons;
+    }
+
   void ToggleMenu() {
     if (menu_) {
       if (menu_->capturing()) return;  // Esc cancels the key capture instead
@@ -249,22 +275,7 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       });
     };
     // Controller 1's buttons for the menu (D-pad, LB/RB, A/B), read for the UI while the game sees a neutral pad.
-    host.pad_buttons = [this]() -> uint16_t {
-      auto* input = runtime() ? static_cast<rex::input::InputSystem*>(runtime()->input_system()) : nullptr;
-      if (!input) return 0;
-      rex::input::X_INPUT_STATE state{};
-      if (input->GetStateForUI(0, &state) != 0) return 0;
-      uint16_t buttons = uint16_t(state.gamepad.buttons);
-      // The left stick's up and down act as the D-pad's (owner's request). Hysteresis: pressed past half the
-      // throw, released under 30 %, so a resting stick does not chatter.
-      static bool stick_up = false, stick_down = false;
-      const int ly = int16_t(state.gamepad.thumb_ly);  // up is positive
-      stick_up = stick_up ? ly > 9830 : ly > 16384;
-      stick_down = stick_down ? ly < -9830 : ly < -16384;
-      if (stick_up) buttons |= 0x0001;    // X_INPUT_GAMEPAD_DPAD_UP
-      if (stick_down) buttons |= 0x0002;  // X_INPUT_GAMEPAD_DPAD_DOWN
-      return buttons;
-    };
+    host.pad_buttons = [this]() -> uint16_t { return ReadPadForUI(); };
     host.quit = [this] {
       game_pause::set(false);  // the game's thread must not be held while the title terminates
       exit_watchdog::arm("menu Quit");
@@ -295,6 +306,25 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   }
   bool input_blocked_ = false;
   std::unique_ptr<recomp_ui::PerfOverlay> perf_overlay_;
+  // Watches controller 1's Select (Back) every frame, on the UI thread: a press toggles the settings menu.
+  class PadWatcher : public rex::ui::ImGuiDialog {
+   public:
+    PadWatcher(rex::ui::ImGuiDrawer* drawer, std::function<void()> toggle, std::function<uint16_t()> read)
+        : ImGuiDialog(drawer), toggle_(std::move(toggle)), read_(std::move(read)) {}
+   protected:
+    void OnDraw(ImGuiIO&) override {
+      constexpr uint16_t kBack = 0x0020;  // X_INPUT_GAMEPAD_BACK
+      const uint16_t pad = read_();
+      const bool pressed = (pad & kBack) && !(prev_ & kBack);
+      prev_ = pad;
+      if (pressed) toggle_();
+    }
+   private:
+    std::function<void()> toggle_;
+    std::function<uint16_t()> read_;
+    uint16_t prev_ = 0;
+  };
+  std::unique_ptr<PadWatcher> pad_watcher_;
 
   std::filesystem::path config_path_;
   std::filesystem::path game_data_root_;
