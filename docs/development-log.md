@@ -218,6 +218,10 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       screen, the water, enemies and islands draw; 60 FPS, 0 failed draws, no bad program. Final build: debug patch
       (DEBUG(ABC), log 018) removed; NativeX D144 (patch 0020): `native_x_renderer_predicated_indirect` defaults to
       true; `native_x_renderer_predicated_constants` stays false (per-tile PS c40-c43, log 020).
+- [ ] Build after 2e3cec8 (to test): NativeX D145 (patch 0021): a shader's microcode is stored only after a
+      translation succeeds (no more bad shaders kept in shaders.cache); D146 (patch 0022) + app: the shader cache
+      screen uses the F1 menu's blue palette; DrawIndexedVertices (82241320) hand-written with Mad Riders' split of
+      list draws over 65,532 indices; the F1 menu takes the left stick's up/down as the D-pad's (hysteresis).
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

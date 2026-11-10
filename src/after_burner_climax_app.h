@@ -135,6 +135,19 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     // The shader cache's status while it is prepared (draws nothing once ready).
     native_x_renderer::ShaderCacheScreen::Style style;
     style.title = "AFTER BURNER CLIMAX";
+    // The F1 menu's blue theme (game_menu.cpp: kPanelTop/kPanelBottom, kBorder, kAccent, kWhite, kGrey, kGold).
+    // ImU32 is ABGR: 0xAABBGGRR.
+    style.backdrop = 0xFF180802;      // (2, 8, 24)
+    style.panel_top = 0xF256240C;     // (12, 36, 86, 242)
+    style.panel_bottom = 0xF21E0A03;  // (3, 10, 30, 242)
+    style.edge = 0xBEFF9646;          // (70, 150, 255, 190)
+    style.accent = 0xFFFFC85A;        // (90, 200, 255)
+    style.bar_left = 0xFFEE7A2C;      // (44, 122, 238)
+    style.bar_right = 0xFFFFC85A;     // (90, 200, 255)
+    style.track = 0xE1341406;         // (6, 20, 52, 225)
+    style.text = 0xFFFFFFFF;
+    style.dim = 0xFFD2AC96;           // (150, 172, 210)
+    style.done = 0xFF5AD2FF;          // gold (255, 210, 90)
     shader_cache_screen_ = std::make_unique<native_x_renderer::ShaderCacheScreen>(drawer, style);
     rex::ui::RegisterBind("bind_menu", "F1", "Open/close the settings menu",
                           [this] { ToggleMenu(); });
@@ -241,7 +254,16 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       if (!input) return 0;
       rex::input::X_INPUT_STATE state{};
       if (input->GetStateForUI(0, &state) != 0) return 0;
-      return uint16_t(state.gamepad.buttons);
+      uint16_t buttons = uint16_t(state.gamepad.buttons);
+      // The left stick's up and down act as the D-pad's (owner's request). Hysteresis: pressed past half the
+      // throw, released under 30 %, so a resting stick does not chatter.
+      static bool stick_up = false, stick_down = false;
+      const int ly = int16_t(state.gamepad.thumb_ly);  // up is positive
+      stick_up = stick_up ? ly > 9830 : ly > 16384;
+      stick_down = stick_down ? ly < -9830 : ly < -16384;
+      if (stick_up) buttons |= 0x0001;    // X_INPUT_GAMEPAD_DPAD_UP
+      if (stick_down) buttons |= 0x0002;  // X_INPUT_GAMEPAD_DPAD_DOWN
+      return buttons;
     };
     host.quit = [this] {
       game_pause::set(false);  // the game's thread must not be held while the title terminates

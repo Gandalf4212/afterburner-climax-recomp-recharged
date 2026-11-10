@@ -22,8 +22,9 @@ INDIRECT_BUFFERs followed (D134, default on since D144); BeginShaderConstantF4's
 - Toml "Renderer (testing)": `native_x_renderer_recorded_draws` (true), `native_x_renderer_predicated_indirect` (true),
   `native_x_renderer_predicated_constants` (false: per-tile PS constants).
 - Open, minor: "EndTiling with a resolve destination: not supported yet" (once per run); D135/D136 info lines
-  (bounded, about 50 per run) could be removed; the Mad Riders 65,532-index split hook is not ported (not needed so far).
-- Owner to test once: the F1 pause, the widened menu.
+  (bounded, about 50 per run) could be removed; the Mad Riders 65,532-index split hook is ported (DrawIndexedVertices).
+- Owner to test once: the F1 pause, the widened menu, the left stick in the menu, the blue shader screen
+  (delete shaders.cache to see it).
 - Next: the launcher (below).
 
 ## Original plan (jets)

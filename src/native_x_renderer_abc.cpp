@@ -13,7 +13,7 @@
 
 // Draws
 NATIVE_X_RENDERER_HOOK(82240F30, DrawVertices)          // flush + DRAW_INDX auto-index
-NATIVE_X_RENDERER_HOOK(82241320, DrawIndexedVertices)   // flush + DRAW_INDX with index data
+// DrawIndexedVertices (82241320): flush + DRAW_INDX with index data; written out by hand below (index split).
 // Targets, clears, resolves, predication, viewport, scissor
 NATIVE_X_RENDERER_HOOK(8223ED20, SetRenderTarget)       // addi r11,r4,3154: +12616 + 4*index
 NATIVE_X_RENDERER_HOOK(8223F780, SetDepthStencilSurface)  // stw r4,12632(r3)
@@ -50,6 +50,48 @@ NATIVE_X_RENDERER_HOOK(822544B8, KickSegment)           // 112 library callers; 
 NATIVE_X_RENDERER_HOOK(822538F8, NewSegment)
 // Frame end: Swap calls VdSwap (82501B3C); the engine calls it (82170048, 82170368), and the library's Present.
 // Written out by hand: the game waits here while the F1 menu pauses it, and the performance overlay counts frames.
+// DrawIndexedVertices (82241320), written out by hand (ported from Mad Riders). The library splits a draw of more
+// than 65532 indices into several DRAW_INDX packets inside one call; NativeXRenderer takes one draw packet per call,
+// so it would draw only the last piece (Mad Riders: a high-detail rider showed only helmet, gloves and boots). While
+// NativeXRenderer is on, such a list draw is issued as several calls of at most 65532 indices, the size the library
+// uses itself: the same packets, one per call. Strips and fans (which would need overlapping pieces) pass through.
+REX_EXTERN(__imp__sub_82241320);
+namespace {
+constexpr uint32_t kMaxIndicesPerCall = 65532;  // a multiple of 3 (triangles, rects) and 4 (quads)
+bool IsListPrimitive(uint32_t prim) {
+  return prim == 1 || prim == 2 || prim == 4 || prim == 8 || prim == 13;  // point, line, triangle, rect, quad lists
+}
+void DrawIndexedVerticesTracked(PPCContext& ctx, uint8_t* base) {
+  ::native_x_renderer::detail::Enter(::native_x_renderer::Call::kDrawIndexedVertices, ctx, base);
+  __imp__sub_82241320(ctx, base);
+  ::native_x_renderer::detail::Leave(::native_x_renderer::Call::kDrawIndexedVertices, ctx, base);
+}
+}  // namespace
+REX_HOOK_RAW(sub_82241320) {
+  if (!::native_x_renderer::detail::g_hooks_active) [[likely]] {
+    __imp__sub_82241320(ctx, base);
+    return;
+  }
+  const uint32_t prim = ctx.r4.u32, count = ctx.r7.u32;
+  if (count <= kMaxIndicesPerCall || !IsListPrimitive(prim)) {
+    DrawIndexedVerticesTracked(ctx, base);
+    return;
+  }
+  const uint64_t dev = ctx.r3.u64, base_vertex = ctx.r5.u64;
+  uint32_t start = ctx.r6.u32, left = count;
+  while (left) {
+    const uint32_t n = left < kMaxIndicesPerCall ? left : kMaxIndicesPerCall;
+    ctx.r3.u64 = dev;
+    ctx.r4.u64 = prim;
+    ctx.r5.u64 = base_vertex;
+    ctx.r6.u64 = start;
+    ctx.r7.u64 = n;
+    DrawIndexedVerticesTracked(ctx, base);
+    start += n;
+    left -= n;
+  }
+}
+
 #include "game_pause.h"
 #include "perf_overlay.h"
 REX_EXTERN(__imp__sub_82252730);

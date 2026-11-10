@@ -1,0 +1,87 @@
+From cf7a0fcd8b11dade73f25baf0aca86d3d809a51a Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 22:34:33 -0500
+Subject: [PATCH] D146: the shader cache screen's palette in its Style (game
+ themes)
+
+---
+ docs/decisions.md                             |  5 +++++
+ .../native_x_renderer/shader_cache_screen.h   |  3 +++
+ src/shader_cache_screen.cpp                   | 20 ++++++++++++-------
+ 3 files changed, 21 insertions(+), 7 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 4845da0..09190bf 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4545,3 +4545,8 @@ The cache stored a shader's microcode when it was analyzed (ShaderCache::Get), b
+ microcode (logs 009, 013) was stored, failed to translate again at every start and, with its pipelines, crashed the
+ driver until shaders.cache was deleted. The microcode now waits in memory (pending_shaders_) and is stored when a
+ translation of it succeeds (from the file or translated).
++
++## D146 — The shader cache screen's whole palette is in its Style (2026-11-09)
++A game themes the screen like its own menus: backdrop, panel (flat, or a top-to-bottom gradient with
++panel_top != panel_bottom), track, text, dim and done colors join accent, bar and edge in
++ShaderCacheScreen::Style. The defaults are the previous constants.
+diff --git a/include/native_x_renderer/shader_cache_screen.h b/include/native_x_renderer/shader_cache_screen.h
+index 9ac7d70..8dcc293 100644
+--- a/include/native_x_renderer/shader_cache_screen.h
++++ b/include/native_x_renderer/shader_cache_screen.h
+@@ -27,6 +27,9 @@ class ShaderCacheScreen : public rex::ui::ImGuiDialog {
+     uint32_t accent = 0xFF32AAFF;          // ImU32 (ABGR): the title and the current step
+     uint32_t bar_left = 0xFF1E78FF, bar_right = 0xFF3CCDFF;  // the bar's gradient
+     uint32_t edge = 0xC8B25940;            // the panel's outline
++    // D146: the rest of the palette, for a game's own theme. panel_top == panel_bottom: a flat panel.
++    uint32_t backdrop = 0xFF100A08, panel_top = 0xF5241814, panel_bottom = 0xF5241814;
++    uint32_t track = 0xFF3E2C26, text = 0xFFF5EEEB, dim = 0xFFB29E96, done = 0xFF78D26E;
+   };
+   ShaderCacheScreen(rex::ui::ImGuiDrawer* drawer, Style style) : ImGuiDialog(drawer), style_(std::move(style)) {}
+   explicit ShaderCacheScreen(rex::ui::ImGuiDrawer* drawer) : ShaderCacheScreen(drawer, Style{}) {}
+diff --git a/src/shader_cache_screen.cpp b/src/shader_cache_screen.cpp
+index 4565219..90e28ee 100644
+--- a/src/shader_cache_screen.cpp
++++ b/src/shader_cache_screen.cpp
+@@ -17,12 +17,6 @@ namespace {
+ using Status = ShaderCacheStatus;
+ using Phase = Status::Phase;
+ 
+-const ImU32 kBackdrop = IM_COL32(8, 10, 16, 255);
+-const ImU32 kPanel = IM_COL32(20, 24, 36, 245);
+-const ImU32 kTrack = IM_COL32(38, 44, 62, 255);
+-const ImU32 kText = IM_COL32(235, 238, 245, 255);
+-const ImU32 kDim = IM_COL32(150, 158, 178, 255);
+-const ImU32 kDone = IM_COL32(110, 210, 120, 255);
+ 
+ struct Step {
+   Phase phase;
+@@ -78,6 +72,9 @@ void ShaderCacheScreen::OnDraw(ImGuiIO& io) {
+   if (finished_) return;
+   const ImU32 kPanelEdge = style_.edge, kBarLeft = style_.bar_left, kBarRight = style_.bar_right;
+   const ImU32 kAccent = style_.accent;
++  // D146: the palette comes from the style (the file's constants are its defaults).
++  const ImU32 kBackdrop = style_.backdrop, kTrack = style_.track, kText = style_.text, kDim = style_.dim,
++              kDone = style_.done;
+   Status s = native_x_renderer::GetShaderCacheStatus();
+   if (Preparing(s.phase)) seen_ = true;
+   if (!seen_) return;  // not started yet, or no cache (another renderer)
+@@ -110,7 +107,16 @@ void ShaderCacheScreen::OnDraw(ImGuiIO& io) {
+   const float w = std::min(screen.x - 40.0f, 620.0f * scale), h = 400.0f * scale;
+   const float x0 = (screen.x - w) * 0.5f, y0 = (screen.y - h) * 0.5f;
+   const float cx = screen.x * 0.5f;
+-  dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + w, y0 + h), Alpha(kPanel, fade), 12.0f * scale);
++  // D146: the panel, flat or a top-to-bottom gradient (rounded caps in the end colors).
++  const float radius = 12.0f * scale;
++  dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + w, y0 + h), Alpha(style_.panel_bottom, fade), radius);
++  if (style_.panel_top != style_.panel_bottom) {
++    dl->AddRectFilled(ImVec2(x0, y0), ImVec2(x0 + w, y0 + 2 * radius), Alpha(style_.panel_top, fade), radius,
++                      ImDrawFlags_RoundCornersTop);
++    dl->AddRectFilledMultiColor(ImVec2(x0, y0 + radius), ImVec2(x0 + w, y0 + h - radius),
++                                Alpha(style_.panel_top, fade), Alpha(style_.panel_top, fade),
++                                Alpha(style_.panel_bottom, fade), Alpha(style_.panel_bottom, fade));
++  }
+   dl->AddRect(ImVec2(x0, y0), ImVec2(x0 + w, y0 + h), Alpha(kPanelEdge, fade), 12.0f * scale, 0, 1.5f * scale);
+   dl->AddRectFilledMultiColor(ImVec2(x0 + 24 * scale, y0 + 4 * scale), ImVec2(x0 + w - 24 * scale, y0 + 7 * scale),
+                               Alpha(kBarLeft, fade), Alpha(kBarRight, fade), Alpha(kBarRight, fade),
+-- 
+2.43.0
+

@@ -1,0 +1,86 @@
+From 335e9a3c78dcbb96c9fb1d55df236ff9bf6f6bb0 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 22:33:35 -0500
+Subject: [PATCH] D145: store a shader's microcode only once a translation
+ succeeds
+
+---
+ docs/decisions.md |  6 ++++++
+ src/shaders.cpp   | 20 +++++++++++++++++++-
+ src/shaders.h     |  5 +++++
+ 3 files changed, 30 insertions(+), 1 deletion(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 76e3ec7..4845da0 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4539,3 +4539,9 @@ Log 022 (D143, predicated_indirect on): the jets (selection screen, stages, rank
+ islands draw; 60 FPS, every draw drawn, no bad program. `native_x_renderer_predicated_indirect` now defaults to true.
+ `native_x_renderer_predicated_constants` stays false: the ring's predicated float constants include per-tile offsets
+ (PS c40-c43), which only one tile can have when the scene is drawn whole (log 020: title screen wrong).
++
++## D145 — A shader's microcode is stored only once one of its translations succeeds (2026-11-09)
++The cache stored a shader's microcode when it was analyzed (ShaderCache::Get), before any translation. Data read as
++microcode (logs 009, 013) was stored, failed to translate again at every start and, with its pipelines, crashed the
++driver until shaders.cache was deleted. The microcode now waits in memory (pending_shaders_) and is stored when a
++translation of it succeeds (from the file or translated).
+diff --git a/src/shaders.cpp b/src/shaders.cpp
+index 36a722f..9fced99 100644
+--- a/src/shaders.cpp
++++ b/src/shaders.cpp
+@@ -128,10 +128,26 @@ rg::SpirvShader* ShaderCache::Get(rg::xenos::ShaderType type, const uint32_t* uc
+     std::lock_guard<std::mutex> lock(times_mutex_);
+     times_.analysis.Add(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+   }
+-  if (shader && storage_) storage_->AddShader(uint8_t(type), hash, ucode, dwords);
++  if (shader && storage_) {
++    std::lock_guard<std::mutex> lock(pending_mutex_);
++    pending_shaders_[key].assign(ucode, ucode + dwords);  // stored once a translation succeeds (D145)
++  }
+   return shaders_.emplace(key, std::move(shader)).first->second.get();
+ }
+ 
++void ShaderCache::StorePendingShader(uint64_t hash, uint32_t type) {
++  if (!storage_) return;
++  std::vector<uint32_t> ucode;
++  {
++    std::lock_guard<std::mutex> lock(pending_mutex_);
++    auto it = pending_shaders_.find(std::make_pair(hash, type));
++    if (it == pending_shaders_.end()) return;
++    ucode = std::move(it->second);
++    pending_shaders_.erase(it);
++  }
++  storage_->AddShader(uint8_t(type), hash, ucode.data(), uint32_t(ucode.size()));
++}
++
+ rg::SpirvShader* ShaderCache::Find(rg::xenos::ShaderType type, uint64_t hash) const {
+   auto it = shaders_.find(std::make_pair(hash, uint32_t(type)));
+   return it != shaders_.end() ? it->second.get() : nullptr;
+@@ -281,6 +297,8 @@ void ShaderCache::Translate(rg::SpirvShaderTranslator& translator, const Job& jo
+                                job.host->spirv.data(), job.host->spirv.size());
+     }
+   }
++  // D145: the shader translates: its microcode may be stored now (it waited since its analysis).
++  StorePendingShader(shader.ucode_data_hash(), uint32_t(shader.type()));
+   // The translator writes no OpSource, which DiligentCore requires (D18).
+   std::vector<uint32_t> spirv = spirv::PrepareForDiligent(job.host->spirv.data(), job.host->spirv.size());
+ 
+diff --git a/src/shaders.h b/src/shaders.h
+index 4f18d61..c4ea6dc 100644
+--- a/src/shaders.h
++++ b/src/shaders.h
+@@ -142,6 +142,11 @@ class ShaderCache {
+   rex::graphics::SpirvShaderTranslator::Features features_;
+   RenderScale scale_;
+   PipelineStorage* storage_ = nullptr;
++  // D145: a shader's microcode waits here until one of its translations succeeds, then goes to storage_: a shader
++  // that never translates (data read as microcode) is never stored, so it cannot fail again at the next start.
++  std::mutex pending_mutex_;
++  std::map<std::pair<uint64_t, uint32_t>, std::vector<uint32_t>> pending_shaders_;
++  void StorePendingShader(uint64_t hash, uint32_t type);
+   std::unique_ptr<rex::graphics::SpirvShaderTranslator> translator_;
+   rex::string::StringBuffer disassembly_buffer_;
+   // nullptr for a shader the analysis failed on. Render thread only; a worker reads only the analysis of
+-- 
+2.43.0
+
