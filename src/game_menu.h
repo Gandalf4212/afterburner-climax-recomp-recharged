@@ -57,6 +57,10 @@ class GameMenu : public rex::ui::ImGuiDialog {
   int tab_ = 0;  // category
   int sel_ = 0;  // row within the category
   uint16_t pad_prev_ = 0, pad_pressed_ = 0;  // controller 1 buttons last frame / newly pressed this frame
+  // Mouse hover is ignored for a few frames after the window's size changes: the resize moves the cursor
+  // relative to the window, which read as a mouse move and selected the row under it (session 4).
+  float last_display_w_ = 0, last_display_h_ = 0;
+  int hover_block_frames_ = 0;
   int keys_sel_ = 0;
   int capturing_ = -1;
   bool quit_armed_ = false;

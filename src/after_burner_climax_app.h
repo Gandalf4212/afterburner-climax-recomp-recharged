@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <string>
@@ -151,11 +152,10 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     shader_cache_screen_ = std::make_unique<native_x_renderer::ShaderCacheScreen>(drawer, style);
     // The gamepad's Select (Back) opens and closes the settings menu, like F1 (owner's request).
     // Deferred: the watcher runs while the dialogs are drawn, and the toggle adds or removes the menu's dialog.
+    // Only the watcher handles Select (the menu ignores it): when the open menu closed itself on Select, the
+    // watcher saw the same press in the same frame, found the menu gone and reopened it (session 4).
     pad_watcher_ = std::make_unique<PadWatcher>(drawer, [this] {
-      // Only opens: while the menu is open, it reads the pad itself and closes on Select (game_menu.cpp).
-      app_context().CallInUIThreadDeferred([this] {
-        if (!menu_) ToggleMenu();
-      });
+      app_context().CallInUIThreadDeferred([this] { ToggleMenu(); });
     }, [this] { return ReadPadForUI(); });
     rex::ui::RegisterBind("bind_menu", "F1", "Open/close the settings menu",
                           [this] { ToggleMenu(); });
@@ -321,12 +321,18 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       const uint16_t pad = read_();
       const bool pressed = (pad & kBack) && !(prev_ & kBack);
       prev_ = pad;
-      if (pressed) toggle_();
+      // One toggle per press, and none within 250 ms of the last (a bouncing or doubly reported press).
+      const auto now = std::chrono::steady_clock::now();
+      if (pressed && now - last_ > std::chrono::milliseconds(250)) {
+        last_ = now;
+        toggle_();
+      }
     }
    private:
     std::function<void()> toggle_;
     std::function<uint16_t()> read_;
     uint16_t prev_ = 0;
+    std::chrono::steady_clock::time_point last_{};
   };
   std::unique_ptr<PadWatcher> pad_watcher_;
 

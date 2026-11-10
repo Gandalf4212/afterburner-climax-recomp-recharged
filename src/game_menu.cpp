@@ -329,7 +329,6 @@ constexpr int kMaxTabRows = 5;
 // ------------------------------------------------------------------ gamepad (controller 1)
 constexpr uint16_t kPadUp = 0x0001, kPadDown = 0x0002, kPadLeft = 0x0004, kPadRight = 0x0008;
 constexpr uint16_t kPadLB = 0x0100, kPadRB = 0x0200, kPadA = 0x1000, kPadB = 0x2000;
-constexpr uint16_t kPadBack = 0x0020;  // Select: closes the menu (the app opens it with Select)
 
 // ------------------------------------------------------------------ drawing helpers
 struct Painter {
@@ -515,6 +514,14 @@ void GameMenu::OnDraw(ImGuiIO& io) {
   pad_pressed_ = uint16_t(pad & ~pad_prev_);
   pad_prev_ = pad;
 
+  if (display.x != last_display_w_ || display.y != last_display_h_) {
+    last_display_w_ = display.x;
+    last_display_h_ = display.y;
+    hover_block_frames_ = 30;  // about half a second: the size can change over several frames
+  } else if (hover_block_frames_ > 0) {
+    --hover_block_frames_;
+  }
+
   ImGui::SetNextWindowPos(ImVec2(0, 0));
   ImGui::SetNextWindowSize(display);
   ImGui::Begin("##recomp_settings_menu", nullptr,
@@ -565,7 +572,7 @@ void GameMenu::DrawMain(float scale) {
       ImGui::IsKeyPressed(ImGuiKey_Space) || pressed(kPadA)) {
     activate = 1;
   }
-  if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) || pressed(kPadB) || pressed(kPadBack)) {
+  if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) || pressed(kPadB)) {  // Select: the app's watcher toggles
     Close();
     return;
   }
@@ -615,7 +622,8 @@ void GameMenu::DrawMain(float scale) {
     const int row = cur[i];
     const float ry = y + i * lh;
     // mouse: hover selects, left click = next, right click = previous
-    if (Hovered(inner_x, ry, inner_w, lh - 4 * scale) && (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) {
+    if (hover_block_frames_ == 0 && Hovered(inner_x, ry, inner_w, lh - 4 * scale) &&
+        (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) {
       if (sel_ != i) quit_armed_ = false;
       sel_ = i;
     }

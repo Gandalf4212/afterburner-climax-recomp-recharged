@@ -240,6 +240,17 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       of pitch 80/320/640 got 1280x720 hosts (383-417) because tiling was never ended after the scene. Expected:
       stage 3 ground textured (it showed only the lower tiles' clear color), bloom/luminance chain at its real
       sizes, and the warning gone.
+- [ ] Session 4, owner test of the EndTiling fix (log 023, Snap13): the warning is gone and the post-scene targets
+      have their real sizes (32x32, 320x180, 640x360, 256x256) but stage 3's ground is still flat beige and
+      1280x256 4x color/depth targets still appear: something else draws outside the full-size pass. Next: an F9
+      trace (`--native_x_renderer_trace=true`) of a stage 3 frame.
+- [ ] Session 4: CI checkout failed since 866d4e5 ("not our ref c5246649"): the submodule was committed at a local
+      patched commit. Reset to upstream bf965e9 (CI applies the patches).
+- [ ] Session 4, menu: Select reopened the menu it had just closed (the menu closed on Select, the watcher saw the
+      same press in the same frame and reopened it). Now only the watcher handles Select, as a toggle, 250 ms
+      guard; the menu no longer reads Select. Display mode -> borderless moved the selection to "Render
+      resolution": the resize moved the cursor relative to the window, read as a mouse move (hover selects).
+      Hover is now ignored for 30 frames after the display size changes.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
