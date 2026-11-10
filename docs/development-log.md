@@ -224,6 +224,8 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       list draws over 65,532 indices; the F1 menu takes the left stick's up/down as the D-pad's (hysteresis).
 - [ ] The gamepad's Select (Back) opens and closes the settings menu (PadWatcher in after_burner_climax_app.h: an
       always-drawn dialog that reads controller 1 for the UI each frame; the toggle is deferred to the UI thread).
+      Owner: Select kept reopening instead of closing. Now the watcher only opens the menu; the open menu closes
+      itself on Select like B (game_menu.cpp kPadBack). The left stick's left/right also act as the D-pad's.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

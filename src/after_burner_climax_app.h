@@ -152,9 +152,9 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
     // The gamepad's Select (Back) opens and closes the settings menu, like F1 (owner's request).
     // Deferred: the watcher runs while the dialogs are drawn, and the toggle adds or removes the menu's dialog.
     pad_watcher_ = std::make_unique<PadWatcher>(drawer, [this] {
+      // Only opens: while the menu is open, it reads the pad itself and closes on Select (game_menu.cpp).
       app_context().CallInUIThreadDeferred([this] {
-        if (menu_ && menu_->capturing()) return;  // rebinding a key: the press is the menu's
-        ToggleMenu();
+        if (!menu_) ToggleMenu();
       });
     }, [this] { return ReadPadForUI(); });
     rex::ui::RegisterBind("bind_menu", "F1", "Open/close the settings menu",
@@ -240,14 +240,18 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
       rex::input::X_INPUT_STATE state{};
       if (input->GetStateForUI(0, &state) != 0) return 0;
       uint16_t buttons = uint16_t(state.gamepad.buttons);
-      // The left stick's up and down act as the D-pad's (owner's request). Hysteresis: pressed past half the
-      // throw, released under 30 %, so a resting stick does not chatter.
-      static bool stick_up = false, stick_down = false;
-      const int ly = int16_t(state.gamepad.thumb_ly);  // up is positive
+      // The left stick acts as the D-pad (owner's request: up/down move, left/right change a setting). Hysteresis:
+      // pressed past half the throw, released under 30 %, so a resting stick does not chatter.
+      static bool stick_up = false, stick_down = false, stick_left = false, stick_right = false;
+      const int lx = int16_t(state.gamepad.thumb_lx), ly = int16_t(state.gamepad.thumb_ly);  // up/right positive
       stick_up = stick_up ? ly > 9830 : ly > 16384;
       stick_down = stick_down ? ly < -9830 : ly < -16384;
-      if (stick_up) buttons |= 0x0001;    // X_INPUT_GAMEPAD_DPAD_UP
-      if (stick_down) buttons |= 0x0002;  // X_INPUT_GAMEPAD_DPAD_DOWN
+      stick_right = stick_right ? lx > 9830 : lx > 16384;
+      stick_left = stick_left ? lx < -9830 : lx < -16384;
+      if (stick_up) buttons |= 0x0001;     // X_INPUT_GAMEPAD_DPAD_UP
+      if (stick_down) buttons |= 0x0002;   // X_INPUT_GAMEPAD_DPAD_DOWN
+      if (stick_left) buttons |= 0x0004;   // X_INPUT_GAMEPAD_DPAD_LEFT
+      if (stick_right) buttons |= 0x0008;  // X_INPUT_GAMEPAD_DPAD_RIGHT
       return buttons;
     }
 

@@ -329,6 +329,7 @@ constexpr int kMaxTabRows = 5;
 // ------------------------------------------------------------------ gamepad (controller 1)
 constexpr uint16_t kPadUp = 0x0001, kPadDown = 0x0002, kPadLeft = 0x0004, kPadRight = 0x0008;
 constexpr uint16_t kPadLB = 0x0100, kPadRB = 0x0200, kPadA = 0x1000, kPadB = 0x2000;
+constexpr uint16_t kPadBack = 0x0020;  // Select: closes the menu (the app opens it with Select)
 
 // ------------------------------------------------------------------ drawing helpers
 struct Painter {
@@ -564,7 +565,7 @@ void GameMenu::DrawMain(float scale) {
       ImGui::IsKeyPressed(ImGuiKey_Space) || pressed(kPadA)) {
     activate = 1;
   }
-  if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) || pressed(kPadB)) {
+  if (ImGui::IsKeyPressed(ImGuiKey_Backspace, false) || pressed(kPadB) || pressed(kPadBack)) {
     Close();
     return;
   }
