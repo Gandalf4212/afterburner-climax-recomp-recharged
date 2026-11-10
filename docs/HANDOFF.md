@@ -30,6 +30,7 @@ draw calls NativeX sees or drawn with wrong state.
 - Log 016: 76/76 replays clean but constants never verified; D141 (0017) compares them.
 - Log 017: garbage (command data) in VS c20-c41 for every replay. **Patch 0018 is DEBUG(ABC): remove before the
   final build** (grep DEBUG(ABC)).
+- Log 018: Present read stale ring data (NewSegment 822538F8 unhooked). Hooked; D142 (0019) guards the scan.
 - Then: owner runs once with predicated_indirect = true (log). Compare the D135 shader-load lines with the failing
   hash: the bad microcode's packet, address and size show what is misread (a load that is not a program, a start
   offset, a nested buffer, a stale address). Suspects: the IM_LOAD start field (shared instruction memory),

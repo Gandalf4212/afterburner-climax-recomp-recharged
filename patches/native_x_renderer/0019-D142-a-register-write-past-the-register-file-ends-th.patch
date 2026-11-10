@@ -1,0 +1,44 @@
+From 6bdb8e1b30e9b16a5530fe196ad646226a5fdd39 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 21:51:10 -0500
+Subject: [PATCH] D142: a register write past the register file ends the scan
+ (data read as packets)
+
+---
+ docs/decisions.md | 8 ++++++++
+ src/state.cpp     | 3 +++
+ 2 files changed, 11 insertions(+)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 76e9c6d..cac7050 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4518,3 +4518,11 @@ Log 016 (D140): 76 of 76 replayed draws and 236 of 236 calls fully match, yet no
+ (0 compared)": the SDK analyzes no shaders when NativeX is the only renderer (598 without analysis), so the float
+ constants (the jets' matrices) were never compared, in any log. A replayed draw without a constant map is now compared
+ over the whole 256-vec4 VS and PS windows.
++
++## D142 — A register write past the register file ends the scan; NewSegment hooked (2026-11-09, After Burner Climax)
++Log 018 (DEBUG(ABC) logging): the command-like data in the float constants (log 017: VS c20-c41 for every replayed
++draw) came mostly from Present's packets: type-0 "packets" writing 4,100 to 16,308 registers (headers 1003C200,
++1ACC4014, 3FB33333). The game's NewSegment (822538F8) was not hooked, and Present calls it: its packets were read from
++the old write position to the new segment, through stale ring data. The game now hooks it (src/native_x_renderer_abc.cpp).
++Here: a type-0 packet whose writes run past the register file is not a packet; the scan stops there (incomplete).
++Draws reload their constants from the shadow, which hid this; replays (non-draw gathers, D133) did not.
+diff --git a/src/state.cpp b/src/state.cpp
+index 6f23067..d56f960 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -153,6 +153,9 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+         uint32_t reg = header & 0x7FFF;
+         bool one = (header >> 15) & 1;
+         if (p + 4 * count > end) return void(out.complete = false);
++        // D142: a register write past the register file is not a packet (data read as packets: an unhooked segment
++        // change, a stale ring lap): the rest is not read.
++        if (reg + (one ? 1 : count) > rex::graphics::RegisterFile::kRegisterCount) return void(out.complete = false);
+         if (!SkippedConstants(skip_constants, reg, one ? 1 : count)) {
+           for (uint32_t i = 0; i < count; ++i) out.writes.emplace_back(one ? reg : reg + i, Load32(base, p + 4 * i));
+         }
+-- 
+2.43.0
+

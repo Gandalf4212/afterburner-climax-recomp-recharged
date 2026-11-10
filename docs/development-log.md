@@ -205,6 +205,11 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       (C0012700, C0006000, ...) in VS c20-c41 where the GPU has 0. BeginShaderConstantF4 (8224A530) builds a correct
       SET_CONSTANT (count*4+5 dwords reserved, NOP padding to 16 bytes). Patch 0018 is DEBUG ONLY (marked
       DEBUG(ABC)): it logs where command-like data enters the constants and where command-like programs come from.
+- [ ] Log 018 (DEBUG(ABC) build, crashed): the command data in the constants came mostly from Present's packets
+      (type-0 "writes" of 4,100-16,308 registers: 1003C200, 1ACC4014, 3FB33333 = 1.4f). NewSegment (822538F8:
+      called by the kick path 82254330, the reservation 822546E8 and Present 82252CFC; writes +48) was not hooked, so
+      Present was read across its segment change through stale ring data. Now hooked; NativeX D142 (patch 0019): a
+      type-0 write past the register file ends the scan.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

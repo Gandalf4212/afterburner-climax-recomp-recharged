@@ -6,7 +6,7 @@
 // Layout: XDK 7978's (= Mad Riders') up to the end of the register shadow, read in DrawIndexedVertices' flush;
 // the block of current objects is 7978's + 168, read in the setters below. Not mapped yet (the observer, F10,
 // reports what is missing): the VS/PS constant setters (likely inlined into the engine), Begin/EndVertices,
-// buffer Lock/Unlock, TextureUnlock, NewSegment, SetShaderGPRAllocation, queries.
+// buffer Lock/Unlock, TextureUnlock, SetShaderGPRAllocation, queries.
 #include <native_x_renderer/hooks.h>
 
 #include <native_x_renderer/native_x_renderer.h>
@@ -43,6 +43,11 @@ NATIVE_X_RENDERER_HOOK(82248DB0, EndTiling)
 // Memory, command buffer
 NATIVE_X_RENDERER_HOOK(82255350, FlushCpuRange)         // dcbf loop, 18 library callers
 NATIVE_X_RENDERER_HOOK(822544B8, KickSegment)           // 112 library callers; write-back +10896, fence +10908
+// NewSegment(dev, dwords): moves the write pointer (+48) to a new segment; called by the kick path (82254330), the
+// reservation (822546E8) and Present (82252CFC). Unhooked, Present's packets were read from its old position to the
+// new segment: stale ring data as packets (log 018: type-0 writes of thousands of registers, command data in the
+// float constants, programs that were not microcode). NativeX D142.
+NATIVE_X_RENDERER_HOOK(822538F8, NewSegment)
 // Frame end: Swap calls VdSwap (82501B3C); the engine calls it (82170048, 82170368), and the library's Present.
 // Written out by hand: the game waits here while the F1 menu pauses it, and the performance overlay counts frames.
 #include "game_pause.h"
