@@ -1,4 +1,4 @@
-# Handoff (2026-11-08, end of session 2)
+# Handoff (2026-11-10, session 4)
 
 ## State
 Branch `nativex`. The game runs natively with **NativeXRenderer as its only renderer**: boot to gameplay, full screen
@@ -15,15 +15,14 @@ draw calls NativeX sees or drawn with wrong state.
 ## Session 3 end (2026-11-09 23:20): open bugs, launcher status
 
 ### Open rendering bugs (track these down next)
-1. **Stage 3 desert ground: flat beige, no texture** (owner's log 004 of build e3cd1f3, screenshot in chat). The F10
-   verifier shows every draw's state = the GPU's (replays: render state, fetch, textures, programs, VS constants; only
-   PS c40-c43 differ, the per-tile constants). So the inputs are right and the renderer draws it wrong. Prime
-   suspect: `EndTiling with a resolve destination: not supported yet` (renderer.cpp ExecuteEndTiling, logged once
-   per run, every run). The game's EndTiling resolves the tiled scene into a texture, and NativeX skips that copy; a
-   ground/fog/depth-blend shader reading it sees nothing. Fix: route EndTiling's resolve through the Resolve path
-   (CaptureResolve/ExecuteResolve). Note src/native_x_renderer_abc.cpp: this game's EndTiling wrapper (82167680)
-   passes a pointer as the second argument, so map the real arguments (flags, rects, dest texture) first. The earlier
-   grey water (fixed by D143) looked similar, so check other stages for flat-colored surfaces too.
+1. **Stage 3 desert ground: flat beige** (Snap12, log 022). **Session 4: cause found, fix committed, to test.** The
+   "EndTiling" hook sat on 82248DB0, a command-buffer begin the engine calls inside the tiled scene: NativeX ended
+   the tiled pass mid-scene, so the targets bound after it got 1280x256 hosts (the ground went there; the lower
+   tiles kept the clear color), and the post-scene passes ran with tiling on (bloom/luminance targets enlarged to
+   1280x720). The hook is now on the real EndTiling 8224DFE8 (development-log "Session 4"). The old plan (route an
+   EndTiling resolve through Resolve) is void: the game's EndTiling never resolves. Owner to check: every stage
+   for flat-colored or missing surfaces, glow/bloom, the log has no "EndTiling with a resolve destination" line and
+   no 1280x256 targets, and the post-process targets are logged at 640x360/320x180/... on the host.
 2. **PS c40-c43 per tile:** the GPU sets them per tile (screen offsets; values like 256.0, 480.0); NativeX draws
    the scene once and keeps whatever the packets left. Harmless so far; watch shaders that use screen position.
 3. **"Texture fetch constant ... has invalid type"** (2-3 per run): from the SDK's texture path, never investigated.

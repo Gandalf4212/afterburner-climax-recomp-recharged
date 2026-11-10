@@ -229,6 +229,17 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 - [ ] Launcher step 1 (llvm-mingw): SDK + NativeX + DiligentCore + FFmpeg compile for x86_64-w64-mingw32
       (local cross-compile). patches/rexglue-sdk/0012, patches/ffmpeg/0002, tools/mingw-cross-toolchain.cmake.
       Open bugs and next steps: HANDOFF "Session 3 end".
+- [ ] **Session 4: EndTiling hook moved 82248DB0 -> 8224DFE8** (src/native_x_renderer_abc.cpp; to test). 82248DB0
+      is not EndTiling: it copies tile rects into +12928.. and stores r9 to +12924 like BeginTiling's tail, takes a
+      command buffer in r4 (clears +116/+120, stores it to +13724), and its one site (82167680, sub_821673E8) runs
+      inside the tiled scene; r6 is a stack rect pointer, hence the "EndTiling with a resolve destination" warning
+      on every run. The XDK EndTiling is 8224DFE8 (resolves each tile via 8224EC70 when rects or dest are given,
+      resets predication +12884..+12900), called once at 821683C4 by the engine's pass end 821682F0 with all-zero
+      arguments. Evidence, log 022: the first fake EndTiling (line 240) is followed at once by 1280x256 4x MSAA
+      color/depth targets at base 0/1024 (241-242), i.e. the scene went on into tile-sized hosts; later 1x targets
+      of pitch 80/320/640 got 1280x720 hosts (383-417) because tiling was never ended after the scene. Expected:
+      stage 3 ground textured (it showed only the lower tiles' clear color), bloom/luminance chain at its real
+      sizes, and the warning gone.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

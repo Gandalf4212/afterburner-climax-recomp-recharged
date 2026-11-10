@@ -58,7 +58,7 @@ The D3D library is linked in at about `0x82230000`-`0x82262000`. Tools: NativeX 
 | SetStreamSource, SetIndices, SetTexture | `8223EB70`, `8223EC90`, `8224C410` | |
 | BeginShaderConstantF4 | `8224A530` | NativeX D130: the engine writes its float constants itself (12 sites) |
 | RunCommandBuffer | `822496E0` | NativeX D130: recorded command buffers (1 engine site) |
-| BeginTiling / EndTiling | `8224DC78` / `82248DB0` | 4x MSAA scene in three 1280x256 tiles; the end's r4 is a pointer (not the XDK argument layout), NativeX only uses it to end the pass |
+| BeginTiling / EndTiling | `8224DC78` / `8224DFE8` | 4x MSAA scene in three 1280x256 tiles; EndTiling has the XDK layout, its one site (821683C4) passes zeros. `82248DB0` (hooked as EndTiling until session 4) is a command-buffer begin with tiling setup |
 | FlushCpuRange, KickSegment | `82255350`, `822544B8` | |
 | Swap (reported as Present) | `82252730` | frame end; written out by hand: the performance overlay counts frames here |
 

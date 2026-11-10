@@ -36,10 +36,17 @@ NATIVE_X_RENDERER_HOOK(8224A530, BeginShaderConstantF4)
 // Recorded command buffers: flush of the inherited state, then INDIRECT_BUFFER per segment (cmdbuf+116); 1 site.
 NATIVE_X_RENDERER_HOOK(822496E0, RunCommandBuffer)
 // Tiling (4x MSAA scene in 1280x256 tiles): BeginTiling(dev, flags, count -> +12924, rects x1,y1,x2,y2, clear
-// color, z f1, stencil) from the engine's frame (82168984); the tiling end clears +12924 (82249018), one engine site
-// (82167680) whose second argument is a pointer, not resolve flags: NativeX only uses it to end the tiled pass.
+// color, z f1, stencil) from the engine's frame (82168984). EndTiling is 8224DFE8 (XDK layout: dev, flags, rects,
+// dest texture, color, z, stencil, params; it resolves per tile through Resolve 8224EC70 only when rects or a dest
+// are given). Its one engine site (821683C4, the engine's pass end, called when the next pass begins) passes all
+// zeros, so no resolve is nested in it. Until session 4 the hook sat on 82248DB0, which is not EndTiling but a
+// command-buffer begin with its own tiling setup (copies tile rects, stores r9 to +12924, r6 = tile rects on the
+// stack): the engine calls it inside the tiled scene (82167680), so NativeX ended the tiled pass mid-scene. The
+// scene's targets bound after it got tile-sized 1280x256 hosts (stage 3 ground drawn there, the lower tiles showed
+// only the clear color: flat beige), and the passes after the scene ran with tiling still on (bloom/luminance
+// targets of pitch 80/320/640 made 1280x720 on the host). Log 022 lines 240-242 and 383-417.
 NATIVE_X_RENDERER_HOOK(8224DC78, BeginTiling)
-NATIVE_X_RENDERER_HOOK(82248DB0, EndTiling)
+NATIVE_X_RENDERER_HOOK(8224DFE8, EndTiling)
 // Memory, command buffer
 NATIVE_X_RENDERER_HOOK(82255350, FlushCpuRange)         // dcbf loop, 18 library callers
 NATIVE_X_RENDERER_HOOK(822544B8, KickSegment)           // 112 library callers; write-back +10896, fence +10908
