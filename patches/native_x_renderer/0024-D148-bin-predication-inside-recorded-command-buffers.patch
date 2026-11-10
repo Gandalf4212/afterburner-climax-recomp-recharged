@@ -1,0 +1,112 @@
+From 13160b1214ecbfb03631af9cb659e345bc60fb25 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Tue, 10 Nov 2026 17:37:41 -0500
+Subject: [PATCH] D148: bin predication inside recorded command buffers:
+ dropped draws logged, native_x_renderer_all_bins
+
+NativeXRenderer draws a tiled pass once for every tile, but evaluates a
+recorded buffer's bin-predicated packets against the mask and select the
+packets last wrote. After Burner Climax (session 4): most of the scene
+is recorded buffers run with predicationSelect 0x1 or 0x4, and stage 2/3
+ground is missing. Dropped draws are counted and logged (1, 2, 4, ...)
+with the mask and select; native_x_renderer_all_bins (default off) reads
+every predicated packet in a recorded buffer as passing.
+---
+ src/native_x_renderer.cpp |  7 +++++++
+ src/state.cpp             | 27 ++++++++++++++++++++++++++-
+ src/state.h               |  2 ++
+ 3 files changed, 35 insertions(+), 1 deletion(-)
+
+diff --git a/src/native_x_renderer.cpp b/src/native_x_renderer.cpp
+index 600fb3b..40ce5e8 100644
+--- a/src/native_x_renderer.cpp
++++ b/src/native_x_renderer.cpp
+@@ -30,6 +30,9 @@ REXCVAR_DEFINE_BOOL(native_x_renderer_predicated_constants, false, "NativeXRende
+ REXCVAR_DEFINE_BOOL(native_x_renderer_predicated_indirect, true, "NativeXRenderer",
+                     "Bin-predicated INDIRECT_BUFFERs (RunCommandBuffer's recorded buffers: After Burner Climax's jets "
+                     "and water) are followed (D134; default since D144)");
++REXCVAR_DEFINE_BOOL(native_x_renderer_all_bins, false, "NativeXRenderer",
++                    "Bin-predicated packets inside recorded command buffers are read as if they passed, for every "
++                    "tile (D148: test for objects the game sends to only some tiles)");
+ 
+ #ifdef _WIN32
+ #ifndef WIN32_LEAN_AND_MEAN
+@@ -108,6 +111,10 @@ void Initialize(const Profile& profile, rex::system::IGraphicsSystem* graphics,
+     g_tracker->set_split_recorded_draws(REXCVAR_GET(native_x_renderer_recorded_draws));
+     StateTracker::set_apply_predicated_constants(REXCVAR_GET(native_x_renderer_predicated_constants));
+     StateTracker::set_follow_predicated_indirect(REXCVAR_GET(native_x_renderer_predicated_indirect));
++    StateTracker::set_all_bins(REXCVAR_GET(native_x_renderer_all_bins));
++    REXLOG_INFO("[native_x_renderer] D148: bin predication in recorded command buffers: {}",
++                REXCVAR_GET(native_x_renderer_all_bins) ? "every tile passes (native_x_renderer_all_bins)"
++                                                        : "evaluated");
+     REXLOG_INFO("[native_x_renderer] recorded command buffers' draws: {}; predicated float constants: {}; "
+                 "predicated indirect buffers: {} (D133-D135)",
+                 REXCVAR_GET(native_x_renderer_recorded_draws) ? "drawn" : "not drawn",
+diff --git a/src/state.cpp b/src/state.cpp
+index 7f33ceb..a4f76b1 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -71,6 +71,24 @@ std::atomic<bool> g_follow_predicated_indirect{false};
+ // start: all bins.
+ uint64_t g_bin_mask = ~uint64_t(0), g_bin_select = ~uint64_t(0);
+ bool PredicatePasses() { return (g_bin_mask & g_bin_select) != 0; }
++// D148: every bin-predicated packet inside a recorded command buffer is read as if it passed
++// (StateTracker::set_all_bins). NativeXRenderer draws a tiled pass once, for every tile, but the mask and
++// select it tracks are the values the packets last wrote (one tile's, or the reset after a pass), so objects
++// the game only sends to some tiles may be dropped (After Burner Climax: stage 2 and 3 ground, session 4).
++std::atomic<bool> g_all_bins{false};
++// D148: draws inside recorded buffers dropped by the predicate, logged with the mask and select at 1, 2, 4, ...
++uint64_t g_dropped_recorded_draws = 0, g_dropped_indirect = 0;
++void CountDroppedDraw(bool indirect) {
++  uint64_t& n = indirect ? g_dropped_indirect : g_dropped_recorded_draws;
++  ++n;
++  if (std::has_single_bit(n)) {
++    REXLOG_INFO("[native_x_renderer] D148: {} {} dropped by bin predication so far "
++                "(this one: mask {:#018x} select {:#018x}){}",
++                n, indirect ? "predicated INDIRECT_BUFFERs (recorded command buffers)" : "draws in recorded buffers",
++                g_bin_mask, g_bin_select,
++                g_all_bins.load(std::memory_order_relaxed) ? "; drawn anyway (native_x_renderer_all_bins)" : "");
++  }
++}
+ 
+ // D136: the indirect buffers summarized so far (game thread only).
+ std::unordered_set<uint32_t> g_indirect_targets;
+@@ -140,7 +158,13 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+         if (p + 4 * count > end) return void(out.complete = false);
+         // D140: inside a recorded command buffer, a predicated packet is read only if the GPU runs it (the game
+         // selects which of a buffer's state variants applies with RunCommandBuffer's predicationSelect).
+-        const bool passes = !(header & 1) || PredicatePasses();
++        const bool predicate = !(header & 1) || PredicatePasses();
++        const bool all_bins = g_all_bins.load(std::memory_order_relaxed);
++        // D148: a recorded buffer's draws, and the INDIRECT_BUFFERs RunCommandBuffer predicates (any depth).
++        if (!predicate && ((depth > 0 && (opcode == 0x22 || opcode == 0x36)) || opcode == 0x3F)) {
++          CountDroppedDraw(opcode == 0x3F);
++        }
++        const bool passes = predicate || (all_bins && (depth > 0 || opcode == 0x3F));
+         if ((header & 1) && (opcode == 0x22 || opcode == 0x36)) {
+           // The XDK bin-predicates every draw packet, tiled or not (the GPU runs it in each bin it
+           // touches); the draw is the same in every bin.
+@@ -320,6 +344,7 @@ const StateTracker::Program StateTracker::kNoProgram{};
+ 
+ void StateTracker::set_apply_predicated_constants(bool on) { g_apply_predicated_constants.store(on); }
+ void StateTracker::set_follow_predicated_indirect(bool on) { g_follow_predicated_indirect.store(on); }
++void StateTracker::set_all_bins(bool on) { g_all_bins.store(on); }
+ 
+ StateTracker::StateTracker(const Profile& profile)
+     : profile_(profile), registers_(std::make_unique<rex::graphics::RegisterFile>()) {
+diff --git a/src/state.h b/src/state.h
+index 4c41a96..1cb2d3c 100644
+--- a/src/state.h
++++ b/src/state.h
+@@ -148,6 +148,8 @@ class StateTracker {
+   static void set_apply_predicated_constants(bool on);
+   // D135: bin-predicated INDIRECT_BUFFERs are followed (D134), off by default (log 009: a bad shader, a crash).
+   static void set_follow_predicated_indirect(bool on);
++  // D148: bin-predicated packets inside recorded command buffers are read as if they passed (every tile).
++  static void set_all_bins(bool on);
+ 
+   void Enter(Call call, uint32_t device, const uint8_t* base, bool nested);
+   // The finished call if it was an outermost device call, else nullptr. Valid until the next Leave.
+-- 
+2.43.0
+

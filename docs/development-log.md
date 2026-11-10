@@ -255,6 +255,18 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       4665..4665"): the dump took a small argument for a pointer. NativeX D147 (patch 0023): pointers below 0x10000
       are skipped. Log 025 also warns "trace: the device pointer changed" repeatedly: a hooked call whose r3 is not
       the device (to find from the dump).
+- [ ] Session 4, log 026 (F9 dump, frame 8515): the scene is BeginTiling (#479, 3 tiles 1280x256/224/240, the
+      game's surfaces are tile-sized 1280x256, bound before it), a few direct draws, then ~100 RunCommandBuffer
+      calls (from 82166F7C) with predicationSelect 0x4 (~40) and 0x1 (~50), the tile resolves (#1220-1225) and
+      EndTiling (#1231, all zeros). Most of the scene, the ground included, is recorded buffers gated by bin
+      predication. RunCommandBuffer writes SET_BIN_SELECT_HI = predicationSelect (8224997C) and a predicated
+      INDIRECT_BUFFER; the recorded buffers start with SET_BIN_MASK_HI 0, SET_BIN_MASK_LO 3; 8223EFA0 (BeginTiling,
+      EndTiling, Present) writes MASK_LO/HI = SetPredication's +12884/+12888 and SELECT_LO -1 / SELECT_HI 0.
+      NativeX evaluates (mask & select) with whatever was written last, though it draws all tiles at once.
+      D148 (patch 0024): drops counted and logged with mask/select; `native_x_renderer_all_bins` (toml, test) passes
+      every predicated packet in recorded buffers and RunCommandBuffer's INDIRECT_BUFFERs. Also seen in the dump:
+      a mid-scene Resolve of 1280x720 (#1041, from 8217235C) and the trace's SetRenderTarget argument names are off
+      (surface=0x1/0x2: the hook's r5 is not the surface; rt0 in the draw state is right).
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

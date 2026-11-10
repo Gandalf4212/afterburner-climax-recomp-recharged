@@ -75,6 +75,8 @@ inline const ConfigSection kConfigSections[] = {
           "true = apply tile-predicated shader constants (breaks the title screen), false = ignore (default)"},
          {"native_x_renderer_predicated_indirect",
           "true = draw the recorded command buffers (jets, water: default), false = skip them"},
+         {"native_x_renderer_all_bins",
+          "true = draw recorded objects in every screen tile (test: missing ground, D148), false = as the game asks (default)"},
      }},
     {"Performance",
      {
