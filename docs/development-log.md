@@ -192,6 +192,9 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       screen with black nozzle discs (wrong transform, no texture); "Unknown ALU scalar operation" (vertex
       DCAD7A87DA7CAC0C, not from an indirect buffer) and "primitive type 0" again. D138 (patch 0014): the verifier
       matches and compares the replayed draws, to find which state is wrong.
+- [ ] Log 014 + snap3 (D138 verify): 228 GPU executions of 76 replayed draws matched, 19 fully clean, the rest
+      RB_COLOR_MASK cpu 0x7 / gpu 0xF; the jet now shows as smoke trails and black nozzles. D139 (patch 0015): a
+      recorded buffer's bin-predicated SET_CONSTANTs are applied (not the window offset/scissor).
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

@@ -1,0 +1,67 @@
+From 487d085b34c8e5e67be359bea7f60be6835db56e Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 20:43:12 -0500
+Subject: [PATCH] D139: apply a recorded buffer's predicated SET_CONSTANTs (but
+ the per-tile window registers)
+
+---
+ docs/decisions.md |  8 ++++++++
+ src/state.cpp     | 18 ++++++++++++++----
+ 2 files changed, 22 insertions(+), 4 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index f1eafc4..017935a 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4494,3 +4494,11 @@ the replays' rebuilt state with the command processor's, each replayed draw (D13
+ draw packet (`TrackedCall::packet`); the observer keeps its snapshots by that address and matches each GPU execution
+ of an external draw packet to the replay of that packet with the fewest executions so far (tiles run the replays in
+ order). Mismatches go to the usual lists; a "D138:" line counts replays tracked, executions matched and clean ones.
++
++## D139 — A recorded buffer's predicated SET_CONSTANTs are applied (2026-11-09)
++Log 014 (D138 verify, jet selection and stage): all 228 GPU executions of the 76 replayed draws matched; 19 of 76 fully
++match; the rest differ in RB_COLOR_MASK (tracker 0x7, GPU 0xF: alpha not written). The recorded buffers set their
++state with bin-predicated SET_CONSTANT packets (their first: C0032D01 00040080, the window registers 0x2080-0x2082),
++which the tracker kept aside. Inside an indirect buffer (depth > 0) every predicated SET_CONSTANT is now applied in
++order (float constants too, whatever `native_x_renderer_predicated_constants` says), except PA_SC_WINDOW_OFFSET and
++the window scissor, which differ per tile. Predicated packets in the ring are as before.
+diff --git a/src/state.cpp b/src/state.cpp
+index 125a736..57f82a0 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -40,6 +40,8 @@ constexpr uint32_t kPacketRegisters[] = {0x2180, 0x2181, 0x2182, 0x2102};
+ constexpr uint32_t kVgtDmaBase = 0x21FA;
+ constexpr uint32_t kVgtDmaSize = 0x21FB;
+ constexpr uint32_t kVgtDrawInitiator = 0x21FC;
++// D139: per tile (PA_SC_WINDOW_OFFSET, PA_SC_WINDOW_SCISSOR_TL, _BR).
++constexpr uint32_t kPaScWindowOffset = 0x2080, kPaScWindowScissorBr = 0x2082;
+ 
+ bool IsPacketRegister(uint32_t reg) {
+   return std::find(std::begin(kPacketRegisters), std::end(kPacketRegisters), reg) != std::end(kPacketRegisters);
+@@ -140,11 +142,19 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+             uint32_t ot = Load32(base, p);
+             uint32_t reg = ConstantBase((ot >> 16) & 0xFF) + (ot & 0x7FF);
+             for (uint32_t i = 1; i < count; ++i) out.predicated_writes.emplace_back(reg + i - 1, Load32(base, p + 4 * i));
++            const bool is_float = reg >= kFloatConstants && reg + count - 1 <= kFloatConstants + kFloatDwords;
+             // D133: float constants (BeginShaderConstantF4 inside a tiled pass predicates its SET_CONSTANT): the
+-            // same values for every bin, applied in order.
+-            if (g_apply_predicated_constants.load(std::memory_order_relaxed) && reg >= kFloatConstants &&
+-                reg + count - 1 <= kFloatConstants + kFloatDwords && !SkippedConstants(skip_constants, reg, count - 1)) {
+-              for (uint32_t i = 1; i < count; ++i) out.writes.emplace_back(reg + i - 1, Load32(base, p + 4 * i));
++            // same values for every bin, applied in order. D139: inside a recorded command buffer (depth > 0)
++            // every predicated SET_CONSTANT is the buffer's own state (RB_COLOR_MASK 0xF where the tracker kept
++            // 0x7, log 014): applied in order, except the window offset and scissor, which differ per tile.
++            const bool apply = is_float ? (depth > 0 || g_apply_predicated_constants.load(std::memory_order_relaxed))
++                                        : depth > 0;
++            if (apply && !SkippedConstants(skip_constants, reg, count - 1)) {
++              for (uint32_t i = 1; i < count; ++i) {
++                uint32_t r = reg + i - 1;
++                if (r >= kPaScWindowOffset && r <= kPaScWindowScissorBr) continue;
++                out.writes.emplace_back(r, Load32(base, p + 4 * i));
++              }
+             }
+           }
+         } else {
+-- 
+2.43.0
+
