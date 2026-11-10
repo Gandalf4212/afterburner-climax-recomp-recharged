@@ -210,6 +210,10 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       called by the kick path 82254330, the reservation 822546E8 and Present 82252CFC; writes +48) was not hooked, so
       Present was read across its segment change through stale ring data. Now hooked; NativeX D142 (patch 0019): a
       type-0 write past the register file ends the scan.
+- [ ] Log 019 (NewSegment hooked): VS constants of every replay match; only PS c40-c43 (per-tile offsets) differ.
+      Log 020 (+ predicated_constants): those take the last tile's values (c40.y 480), title screen wrong: leave off.
+      State right, nothing drawn: the renderer's OnEnter did not record RunCommandBuffer, so OnLeave dropped every
+      replayed draw (g_call mismatch). D143 (patch 0020) fixes it.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

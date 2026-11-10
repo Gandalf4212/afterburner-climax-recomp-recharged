@@ -1,0 +1,41 @@
+From 6a09ce8a5747b8966f8963b842d9a496982f4a79 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 22:09:36 -0500
+Subject: [PATCH] D143: the renderer records RunCommandBuffer in OnEnter (its
+ recorded draws were dropped)
+
+---
+ docs/decisions.md | 7 +++++++
+ src/renderer.cpp  | 1 +
+ 2 files changed, 8 insertions(+)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index cac7050..5b592ec 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4526,3 +4526,10 @@ draw) came mostly from Present's packets: type-0 "packets" writing 4,100 to 16,3
+ the old write position to the new segment, through stale ring data. The game now hooks it (src/native_x_renderer_abc.cpp).
+ Here: a type-0 packet whose writes run past the register file is not a packet; the scan stops there (incomplete).
+ Draws reload their constants from the shadow, which hid this; replays (non-draw gathers, D133) did not.
++
++## D143 — The renderer takes RunCommandBuffer's arguments: its recorded draws were dropped (2026-11-09)
++Logs 019/020: every replayed draw's state matches the command processor's (render state, fetch, programs, VS
++constants; PS c40-c43 differ only per tile, like the window offset), yet no jet and the near water flat grey. The
++renderer's OnEnter records the call it acts on (g_call) only for draws, resolves, Present and tiling; OnLeave returns
++when the tracked call is not g_call's. RunCommandBuffer was neither, so every draw D133 handed on was dropped before
++capture. RunCommandBuffer is now recorded in OnEnter.
+diff --git a/src/renderer.cpp b/src/renderer.cpp
+index 912150d..fa9545d 100644
+--- a/src/renderer.cpp
++++ b/src/renderer.cpp
+@@ -1956,6 +1956,7 @@ void OnEnter(Call call, PPCContext& ctx, uint8_t* base, bool nested) {
+     case Call::kBeginTiling:
+     case Call::kEndTiling:
+     case Call::kQueryIssue:
++    case Call::kRunCommandBuffer:  // D143: its recorded draws (D133) are matched to this call in OnLeave
+       break;
+     default:
+       if (!(Info(call).flags & kDraw)) return;
+-- 
+2.43.0
+
