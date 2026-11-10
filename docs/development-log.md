@@ -251,6 +251,10 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       guard; the menu no longer reads Select. Display mode -> borderless moved the selection to "Render
       resolution": the resize moved the cursor relative to the window, read as a mouse move (hover selects).
       Hover is now ignored for 30 frames after the display size changes.
+- [ ] Session 4: log 025, F9 trace dump crashed (guest read of 0x25 on the render thread, right after "dumping frames
+      4665..4665"): the dump took a small argument for a pointer. NativeX D147 (patch 0023): pointers below 0x10000
+      are skipped. Log 025 also warns "trace: the device pointer changed" repeatedly: a hooked call whose r3 is not
+      the device (to find from the dump).
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

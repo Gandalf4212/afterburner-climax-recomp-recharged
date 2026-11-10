@@ -107,6 +107,7 @@ compiled when first drawn and kept. Draws wait up to 8 ms per frame for those (F
 | 0020 | D144: recorded command buffers followed by default (jets and water) |
 | 0021 | D145: a shader's microcode is stored only once a translation succeeds |
 | 0022 | D146: the shader cache screen's palette in its Style (blue theme) |
+| 0023 | D147: the trace dump (F9) reads no argument below 64 KB as a pointer (crash reading guest 0x25) |
 
 To change NativeX: `git -C thirdparty/native_x_renderer checkout bf965e9 && git am ../../patches/native_x_renderer/*`,
 commit, then `git format-patch bf965e9..HEAD -o ../../patches/native_x_renderer` (replace the old files).

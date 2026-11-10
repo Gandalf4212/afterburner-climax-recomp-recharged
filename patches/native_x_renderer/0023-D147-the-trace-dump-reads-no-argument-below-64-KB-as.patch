@@ -1,0 +1,92 @@
+From bb0aca4c11bdb763663b4280a7537b3f59a35f95 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Tue, 10 Nov 2026 16:57:17 -0500
+Subject: [PATCH] D147: the trace dump reads no argument below 64 KB as a
+ pointer
+
+After Burner Climax: an F9 dump crashed reading guest 0x25 (a count or
+flags taken for a pointer). Pointers below 0x10000 are skipped in the
+call details, the draw state and the command-buffer positions.
+---
+ src/trace.cpp | 20 +++++++++++++-------
+ 1 file changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/src/trace.cpp b/src/trace.cpp
+index a5dfa89..2f7afb0 100644
+--- a/src/trace.cpp
++++ b/src/trace.cpp
+@@ -97,7 +97,13 @@ std::string FormatArguments(const CallInfo& info, const Pending& p) {
+ }
+ 
+ // The state a draw uses, read from the device before the draw runs.
++// Guest pointers are at least 64 KB (the first pages are never mapped): anything lower in an argument the dump
++// reads as a pointer is a count or flags of a call whose layout differs (After Burner Climax: a dump crashed
++// reading guest 0x25).
++bool GuestPointer(uint32_t address) { return address >= 0x10000; }
++
+ std::string DrawState(const uint8_t* base, uint32_t device) {
++  if (!GuestPointer(device)) return fmt::format("device={:#x}?", device);
+   const DeviceLayout& d = g_profile->device;
+   auto at = [&](uint32_t offset) { return offset != kUnknown ? Load32(base, device + offset) : 0u; };
+   std::string out = fmt::format("vs={:#x} ps={:#x} decl={:#x} ib={:#x} rt0={:#x} ds={:#x}", at(d.vertex_shader),
+@@ -120,7 +126,7 @@ std::string Detail(const uint8_t* base, const Pending& p) {
+   const ObjectLayout& o = g_profile->objects;
+   auto surface = [&](uint32_t s) {
+     // The surface object (ObjectLayout): RB_SURFACE_INFO (pitch, MSAA), RB_COLOR_INFO / RB_DEPTH_INFO, size.
+-    if (!s || o.surface_info == kUnknown || o.surface_color_depth_info == kUnknown) return std::string();
++    if (!GuestPointer(s) || o.surface_info == kUnknown || o.surface_color_depth_info == kUnknown) return std::string();
+     std::string size;
+     if (o.surface_size != kUnknown) {
+       uint32_t v = Load32(base, s + o.surface_size);
+@@ -131,12 +137,12 @@ std::string Detail(const uint8_t* base, const Pending& p) {
+   };
+   auto texture = [&](uint32_t t) {
+     // The texture object's 6-dword fetch constant (ObjectLayout): dword 1 = base and format, 2 = size.
+-    if (!t || o.texture_fetch == kUnknown) return std::string();
++    if (!GuestPointer(t) || o.texture_fetch == kUnknown) return std::string();
+     return fmt::format(" [fetch1={:#x} fetch2={:#x}]", Load32(base, t + o.texture_fetch + 4),
+                        Load32(base, t + o.texture_fetch + 8));
+   };
+   auto rect = [&](uint32_t r) {
+-    return r ? fmt::format(" [rect {} {} {} {}]", Load32(base, r), Load32(base, r + 4), Load32(base, r + 8),
++    return GuestPointer(r) ? fmt::format(" [rect {} {} {} {}]", Load32(base, r), Load32(base, r + 4), Load32(base, r + 8),
+                            Load32(base, r + 12))
+              : std::string();
+   };
+@@ -150,13 +156,13 @@ std::string Detail(const uint8_t* base, const Pending& p) {
+     case Call::kResolve:
+       return rect(p.r[2]) + texture(p.r[3]);
+     case Call::kClearF:
+-      return rect(p.r[2]) + (p.r[3] ? fmt::format(" [color {} {} {} {}]", LoadFloat(base, p.r[3]),
++      return rect(p.r[2]) + (GuestPointer(p.r[3]) ? fmt::format(" [color {} {} {} {}]", LoadFloat(base, p.r[3]),
+                                                   LoadFloat(base, p.r[3] + 4), LoadFloat(base, p.r[3] + 8),
+                                                   LoadFloat(base, p.r[3] + 12))
+                                     : std::string());
+     case Call::kBeginTiling: {
+       std::string out;
+-      for (uint32_t i = 0; i < p.r[2] && i < 8 && p.r[3]; ++i) out += rect(p.r[3] + 16 * i);
++      for (uint32_t i = 0; i < p.r[2] && i < 8 && GuestPointer(p.r[3]); ++i) out += rect(p.r[3] + 16 * i);
+       return out;
+     }
+     case Call::kEndTiling:
+@@ -165,7 +171,7 @@ std::string Detail(const uint8_t* base, const Pending& p) {
+     case Call::kVertexBufferUnlock:
+     case Call::kIndexBufferLock:
+     case Call::kIndexBufferUnlock:
+-      if (!p.r[0] || o.buffer_address == kUnknown || o.buffer_size == kUnknown) return {};
++      if (!GuestPointer(p.r[0]) || o.buffer_address == kUnknown || o.buffer_size == kUnknown) return {};
+       return fmt::format(" [base={:#x} size={:#x}]", Load32(base, p.r[0] + o.buffer_address),
+                          Load32(base, p.r[0] + o.buffer_size));
+     case Call::kTextureUnlock:
+@@ -258,7 +264,7 @@ void OnEnter(Call call, PPCContext& ctx, uint8_t* base, bool nested, bool other_
+     uint32_t previous = g_device.exchange(p.r[0], std::memory_order_relaxed);
+     if (previous && previous != p.r[0]) g_device_changed.store(true, std::memory_order_relaxed);
+   }
+-  if (g_dump_left.load(std::memory_order_relaxed) > 0 && info.device) {
++  if (g_dump_left.load(std::memory_order_relaxed) > 0 && info.device && GuestPointer(p.r[0])) {
+     const DeviceLayout& d = g_profile->device;
+     if (d.command_buffer_write != kUnknown) p.write_before = Load32(base, p.r[0] + d.command_buffer_write);
+     if (info.flags & kDraw) p.state = DrawState(base, p.r[0]);
+-- 
+2.43.0
+
