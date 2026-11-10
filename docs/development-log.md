@@ -201,6 +201,10 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 - [ ] Log 016 (D140): 76/76 replayed draws and 236/236 calls fully match; no jet. Float constants were never
       compared (no shader analysis without Xenia: "0 compared", 598 unanalyzed). D141 (patch 0017): replays'
       constants compared over the whole windows.
+- [ ] Log 017 (D141): constants compared: 0 of 178 replays clean; the tracker has command-stream dwords
+      (C0012700, C0006000, ...) in VS c20-c41 where the GPU has 0. BeginShaderConstantF4 (8224A530) builds a correct
+      SET_CONSTANT (count*4+5 dwords reserved, NOP padding to 16 bytes). Patch 0018 is DEBUG ONLY (marked
+      DEBUG(ABC)): it logs where command-like data enters the constants and where command-like programs come from.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
