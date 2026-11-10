@@ -12,31 +12,19 @@ to Xenia; build 42503819109 (bedf762) is the first that forces NativeX. Deleting
 help. Log 007 (owner's F:\claude2\abc): every draw call drawn, 0 failed or skipped, so the jets' draws are either not
 draw calls NativeX sees or drawn with wrong state.
 
-## Session 3 (2026-11-09): jets not fixed yet
-- The jets are drawn only by `RunCommandBuffer` (822496E0) replaying buffers the game recorded. Its INDIRECT_BUFFERs
-  are always bin-predicated (0xC0013F01) and the tracker skipped them (log 008 verify: 0 indirect buffers read; 228
-  GPU draw packets outside every tracked call, matched to none).
-- D133 (0009) splits a replay into draws; D134 (0010) follows predicated INDIRECT_BUFFERs; with both, log 009: other
-  draws broke, a bad vertex shader (7D92E03DB516BD8F, "Unknown ALU vector operation") was read, the driver crashed.
-- D135 (0011): D134 is `native_x_renderer_predicated_indirect`, default off (stable, jets invisible). With it on, the
-  log lists the first predicated INDIRECT_BUFFERs and the shader loads inside them ("D135:" lines).
-- Crash safety: a crash writes `shaders.cache.bad`; the next launch deletes shaders.cache.
-- Log 010 (on): same failure, D135 logging not useful; D136 (0012) logs "D136:" lines instead.
-- Logs 011/012: recorded buffers parse and draw; jets' constants came too late. D137 (0013) reads them before
-  RunCommandBuffer. Test with predicated_indirect AND predicated_constants on.
-- Log 013: the jet draws, wrong (grey, huge). D138 (0014): verify capture now covers replays ("D138:" line).
-- Log 014: replays verified; RB_COLOR_MASK wrong (predicated state in recorded buffers). D139 (0015) applies it.
-- Log 015: 46/76 replays clean; D140 (0016) evaluates bin predication (mask & select) in recorded buffers.
-- Log 016: 76/76 replays clean but constants never verified; D141 (0017) compares them.
-- Log 017: garbage (command data) in VS c20-c41 for every replay. **Patch 0018 is DEBUG(ABC): remove before the
-  final build** (grep DEBUG(ABC)).
-- Log 018: Present read stale ring data (NewSegment 822538F8 unhooked). Hooked; D142 (0019) guards the scan.
-- Logs 019/020: replays' state right but never captured (renderer OnEnter). D143 (0020).
-- Then: owner runs once with predicated_indirect = true (log). Compare the D135 shader-load lines with the failing
-  hash: the bad microcode's packet, address and size show what is misread (a load that is not a program, a start
-  offset, a nested buffer, a stale address). Suspects: the IM_LOAD start field (shared instruction memory),
-  SetShaderGPRAllocation's three buffers (82243950, also predicated), depth-2 buffers; then the state the replays
-  apply (the other draws broke).
+## Session 3 (2026-11-09): jets fixed
+The jets and the near water were drawn only by `RunCommandBuffer` (822496E0) replaying recorded command buffers.
+NativeX D133-D144 (patches 0009-0020): the replays' draws are split and handed on (D133); their predicated
+INDIRECT_BUFFERs followed (D134, default on since D144); BeginShaderConstantF4's filled constants read before them
+(D137); predicated SET_CONSTANTs inside them applied when the bin predicate passes (D139, D140); the game's NewSegment
+(822538F8) hooked so Present is no longer read through stale ring data (D142); the renderer captures the replays
+(D143). The verifier checks replays (D138, D141). Log 022: everything draws, 60 FPS.
+- Toml "Renderer (testing)": `native_x_renderer_recorded_draws` (true), `native_x_renderer_predicated_indirect` (true),
+  `native_x_renderer_predicated_constants` (false: per-tile PS constants).
+- Open, minor: "EndTiling with a resolve destination: not supported yet" (once per run); D135/D136 info lines
+  (bounded, about 50 per run) could be removed; the Mad Riders 65,532-index split hook is not ported (not needed so far).
+- Owner to test once: the F1 pause, the widened menu.
+- Next: the launcher (below).
 
 ## Original plan (jets)
 1. Verify capture on the jet selection screen: `--recomp_log=true --native_x_renderer_verify=true`, F10 there

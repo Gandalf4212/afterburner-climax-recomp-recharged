@@ -214,6 +214,10 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       Log 020 (+ predicated_constants): those take the last tile's values (c40.y 480), title screen wrong: leave off.
       State right, nothing drawn: the renderer's OnEnter did not record RunCommandBuffer, so OnLeave dropped every
       replayed draw (g_call mismatch). D143 (patch 0020) fixes it.
+- [x] **Jets fixed.** Log 022 (build 8f04d27, D143): jets on the selection screen, in stages and on the ranking
+      screen, the water, enemies and islands draw; 60 FPS, 0 failed draws, no bad program. Final build: debug patch
+      (DEBUG(ABC), log 018) removed; NativeX D144 (patch 0020): `native_x_renderer_predicated_indirect` defaults to
+      true; `native_x_renderer_predicated_constants` stays false (per-tile PS c40-c43, log 020).
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

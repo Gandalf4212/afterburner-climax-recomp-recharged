@@ -1,8 +1,8 @@
-From 6a09ce8a5747b8966f8963b842d9a496982f4a79 Mon Sep 17 00:00:00 2001
+From d9a7f966b0b78a4f699ff7d708e332cdc47a27c5 Mon Sep 17 00:00:00 2001
 From: Gandalf4212 <gandalf4212@gmail.com>
 Date: Mon, 9 Nov 2026 22:09:36 -0500
-Subject: [PATCH] D143: the renderer records RunCommandBuffer in OnEnter (its
- recorded draws were dropped)
+Subject: [PATCH 19/20] D143: the renderer records RunCommandBuffer in OnEnter
+ (its recorded draws were dropped)
 
 ---
  docs/decisions.md | 7 +++++++

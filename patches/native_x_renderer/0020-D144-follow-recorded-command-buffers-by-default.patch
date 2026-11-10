@@ -1,0 +1,44 @@
+From 2d2246431677bd46a288003ecb8959e0ea5a8031 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 22:27:07 -0500
+Subject: [PATCH 20/20] D144: follow recorded command buffers by default
+
+---
+ docs/decisions.md         | 6 ++++++
+ src/native_x_renderer.cpp | 6 +++---
+ 2 files changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 5b592ec..76e3ec7 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4533,3 +4533,9 @@ constants; PS c40-c43 differ only per tile, like the window offset), yet no jet
+ renderer's OnEnter records the call it acts on (g_call) only for draws, resolves, Present and tiling; OnLeave returns
+ when the tracked call is not g_call's. RunCommandBuffer was neither, so every draw D133 handed on was dropped before
+ capture. RunCommandBuffer is now recorded in OnEnter.
++
++## D144 — Recorded command buffers on by default (2026-11-09, After Burner Climax)
++Log 022 (D143, predicated_indirect on): the jets (selection screen, stages, ranking), the water, the enemies and the
++islands draw; 60 FPS, every draw drawn, no bad program. `native_x_renderer_predicated_indirect` now defaults to true.
++`native_x_renderer_predicated_constants` stays false: the ring's predicated float constants include per-tile offsets
++(PS c40-c43), which only one tile can have when the scene is drawn whole (log 020: title screen wrong).
+diff --git a/src/native_x_renderer.cpp b/src/native_x_renderer.cpp
+index 52039f1..600fb3b 100644
+--- a/src/native_x_renderer.cpp
++++ b/src/native_x_renderer.cpp
+@@ -27,9 +27,9 @@ REXCVAR_DEFINE_BOOL(native_x_renderer_recorded_draws, true, "NativeXRenderer",
+ REXCVAR_DEFINE_BOOL(native_x_renderer_predicated_constants, false, "NativeXRenderer",
+                     "Bin-predicated SET_CONSTANT float constant writes (inside tiled passes) are applied in order, "
+                     "like unpredicated ones (D133)");
+-REXCVAR_DEFINE_BOOL(native_x_renderer_predicated_indirect, false, "NativeXRenderer",
+-                    "Bin-predicated INDIRECT_BUFFERs (RunCommandBuffer's recorded buffers) are followed (D134; off: "
+-                    "log 009, a bad shader and a crash; D135)");
++REXCVAR_DEFINE_BOOL(native_x_renderer_predicated_indirect, true, "NativeXRenderer",
++                    "Bin-predicated INDIRECT_BUFFERs (RunCommandBuffer's recorded buffers: After Burner Climax's jets "
++                    "and water) are followed (D134; default since D144)");
+ 
+ #ifdef _WIN32
+ #ifndef WIN32_LEAN_AND_MEAN
+-- 
+2.43.0
+

@@ -1,8 +1,8 @@
-From 6bdb8e1b30e9b16a5530fe196ad646226a5fdd39 Mon Sep 17 00:00:00 2001
+From 2e50d30ded179e969d966e415b61d8527177b2f5 Mon Sep 17 00:00:00 2001
 From: Gandalf4212 <gandalf4212@gmail.com>
 Date: Mon, 9 Nov 2026 21:51:10 -0500
-Subject: [PATCH] D142: a register write past the register file ends the scan
- (data read as packets)
+Subject: [PATCH 18/20] D142: a register write past the register file ends the
+ scan (data read as packets)
 
 ---
  docs/decisions.md | 8 ++++++++
@@ -26,10 +26,10 @@ index 76e9c6d..cac7050 100644
 +Here: a type-0 packet whose writes run past the register file is not a packet; the scan stops there (incomplete).
 +Draws reload their constants from the shadow, which hid this; replays (non-draw gathers, D133) did not.
 diff --git a/src/state.cpp b/src/state.cpp
-index 6f23067..d56f960 100644
+index 4efe0d8..7f33ceb 100644
 --- a/src/state.cpp
 +++ b/src/state.cpp
-@@ -153,6 +153,9 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+@@ -117,6 +117,9 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
          uint32_t reg = header & 0x7FFF;
          bool one = (header >> 15) & 1;
          if (p + 4 * count > end) return void(out.complete = false);
