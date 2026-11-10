@@ -171,6 +171,13 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 - [ ] D134 (patch 0010): RunCommandBuffer writes its INDIRECT_BUFFERs bin-predicated (r27 = 1 at 822499C0, header
       0xC0013F01 at 82249B78); ScanPackets ignored predicated non-draw packets, so D133 never saw the recorded
       buffers. Predicated INDIRECT_BUFFERs are now followed. To test.
+- [ ] Build 77e6b68 + toml, log 009: jets still invisible, other draws broken, then a crash: a vertex shader read from a
+      followed buffer was not microcode ("Unknown ALU vector operation", 7D92E03DB516BD8F), then nvoglv64.dll access
+      violation; shaders.cache kept it and later launches crashed. D135 (patch 0011): D134 behind
+      `native_x_renderer_predicated_indirect` (default off), with logging of the followed buffers and their shader
+      loads. A crash now leaves `shaders.cache.bad`; the next launch deletes the cache and builds it again.
+      Correction: the verifier's 228 "outside the ring" packets are not matched to any call (observer.cpp
+      OnGpuDraw); the jets come only from RunCommandBuffer replays.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

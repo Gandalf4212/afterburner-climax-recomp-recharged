@@ -12,14 +12,20 @@ to Xenia; build 42503819109 (bedf762) is the first that forces NativeX. Deleting
 help. Log 007 (owner's F:\claude2\abc): every draw call drawn, 0 failed or skipped, so the jets' draws are either not
 draw calls NativeX sees or drawn with wrong state.
 
-## Session 3 (2026-11-09): jets, to test
-- D133 (patch 0009): RunCommandBuffer's recorded draws handed to the renderer one by one (cvar
-  `native_x_renderer_recorded_draws`, default true). Alone it changed nothing (log 008).
-- D134 (patch 0010): the real gap: RunCommandBuffer's INDIRECT_BUFFERs are always bin-predicated and the tracker
-  skipped them (verify: 0 indirect buffers read; 228 draw packets outside the ring). Now followed.
-- `native_x_renderer_predicated_constants` (default false): made the nozzles worse; leave it off.
-- Owner: test the jet selection screen and a stage with predicated_constants off; F10 verify capture if jets are still
-  missing ("packets read: ... indirect buffers" should now be > 0).
+## Session 3 (2026-11-09): jets not fixed yet
+- The jets are drawn only by `RunCommandBuffer` (822496E0) replaying buffers the game recorded. Its INDIRECT_BUFFERs
+  are always bin-predicated (0xC0013F01) and the tracker skipped them (log 008 verify: 0 indirect buffers read; 228
+  GPU draw packets outside every tracked call, matched to none).
+- D133 (0009) splits a replay into draws; D134 (0010) follows predicated INDIRECT_BUFFERs; with both, log 009: other
+  draws broke, a bad vertex shader (7D92E03DB516BD8F, "Unknown ALU vector operation") was read, the driver crashed.
+- D135 (0011): D134 is `native_x_renderer_predicated_indirect`, default off (stable, jets invisible). With it on, the
+  log lists the first predicated INDIRECT_BUFFERs and the shader loads inside them ("D135:" lines).
+- Crash safety: a crash writes `shaders.cache.bad`; the next launch deletes shaders.cache.
+- Next: owner runs once with predicated_indirect = true (log). Compare the D135 shader-load lines with the failing
+  hash: the bad microcode's packet, address and size show what is misread (a load that is not a program, a start
+  offset, a nested buffer, a stale address). Suspects: the IM_LOAD start field (shared instruction memory),
+  SetShaderGPRAllocation's three buffers (82243950, also predicated), depth-2 buffers; then the state the replays
+  apply (the other draws broke).
 
 ## Original plan (jets)
 1. Verify capture on the jet selection screen: `--recomp_log=true --native_x_renderer_verify=true`, F10 there

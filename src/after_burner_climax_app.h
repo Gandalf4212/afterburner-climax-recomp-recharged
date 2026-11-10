@@ -284,6 +284,17 @@ class AfterBurnerClimaxApp : public rex::ReXApp {
   void SetUpShaderCache() {
     native_x_renderer::ShaderCacheSource source;
     source.file = rex::filesystem::GetExecutableFolder() / "shaders.cache";
+    {
+      // The last run crashed (crash_handler.h): its cache may hold what crashed it; built again.
+      std::error_code ec;
+      auto bad = source.file;
+      bad += ".bad";
+      if (std::filesystem::exists(bad, ec)) {
+        std::filesystem::remove(source.file, ec);
+        std::filesystem::remove(bad, ec);
+        REXLOG_WARN("the last run crashed: shaders.cache deleted, built again");
+      }
+    }
     const auto x360_dir = game_data_root_ / "media" / "x360";
     source.game_fingerprint = shader_scan::fingerprint(x360_dir);
     source.scan = [x360_dir](const std::function<void(uint32_t, uint32_t)>& progress) {

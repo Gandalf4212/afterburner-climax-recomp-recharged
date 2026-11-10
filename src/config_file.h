@@ -73,6 +73,8 @@ inline const ConfigSection kConfigSections[] = {
           "true = draw the game's recorded command buffers (jets, D133/D134; default), false = skip them"},
          {"native_x_renderer_predicated_constants",
           "true = apply tile-predicated shader constants (D133 test; worse nozzles), false = ignore (default)"},
+         {"native_x_renderer_predicated_indirect",
+          "true = replay the recorded command buffers (D134 test; crashed in log 009), false = skip (default)"},
      }},
     {"Performance",
      {

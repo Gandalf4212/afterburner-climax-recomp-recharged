@@ -111,6 +111,9 @@ inline LONG WINAPI Filter(EXCEPTION_POINTERS* info) {
     std::fputs(report.c_str(), f);
     std::fclose(f);
   }
+  // A crash may come from what the shader cache holds (a bad shader or pipeline from this run, log 009): the next
+  // launch deletes shaders.cache before opening it (after_burner_climax_app.h, SetUpShaderCache).
+  if (FILE* f = _wfopen((Folder() / "shaders.cache.bad").c_str(), L"w")) std::fclose(f);
   return EXCEPTION_CONTINUE_SEARCH;  // Windows Error Reporting still records it
 }
 

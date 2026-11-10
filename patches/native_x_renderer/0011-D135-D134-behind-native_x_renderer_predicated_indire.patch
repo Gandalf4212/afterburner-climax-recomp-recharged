@@ -1,0 +1,134 @@
+From ad249c6c1aa6032cd72ba391d8b5c807d0e997da Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 19:20:27 -0500
+Subject: [PATCH] D135: D134 behind native_x_renderer_predicated_indirect
+ (default off); indirect buffers and their shader loads logged
+
+---
+ docs/decisions.md         | 10 ++++++++++
+ src/native_x_renderer.cpp | 10 ++++++++--
+ src/state.cpp             | 19 ++++++++++++++++++-
+ src/state.h               |  2 ++
+ 4 files changed, 38 insertions(+), 3 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 64c395f..3c3f1b0 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4458,3 +4458,13 @@ and writes its INDIRECT_BUFFERs as `0xC0013F00 | 1` (82249B78): always bin-predi
+ non-draw packet aside (D130's predicated SET_CONSTANT branch), so the recorded buffers were never read and D133 had no
+ draw points. Now a predicated INDIRECT_BUFFER is followed like an unpredicated one.
+ SetShaderGPRAllocation (82243950) predicates its three with device+12892 the same way; they are state, now applied.
++
++## D135 — D134 behind a switch; indirect buffers and their shader loads logged (2026-11-09, After Burner Climax)
++With D134 the jets stayed invisible, other draws broke, and the run ended in a crash (log 009): a vertex shader read
++from a followed buffer was not microcode ("Unknown ALU vector operation", 7D92E03DB516BD8F), then the driver crashed;
++the shader cache kept it, and later launches crashed at start. D134 is now cvar `native_x_renderer_predicated_indirect`
++(default false: back to D133's behaviour). For the next test with it on: the first 32 predicated INDIRECT_BUFFERs
++(address, depth, target, length) and the first 64 shader loads inside indirect buffers (packet, type, address, start,
++size, hash) are logged, to find where the bad microcode comes from. The verifier (observer.cpp) counts as "outside the
++ring" the GPU draw packets outside every tracked call's packets, not matched to a call: the jets are drawn only by
++replays, never seen at record time.
+diff --git a/src/native_x_renderer.cpp b/src/native_x_renderer.cpp
+index 72e8d77..9e09255 100644
+--- a/src/native_x_renderer.cpp
++++ b/src/native_x_renderer.cpp
+@@ -27,6 +27,9 @@ REXCVAR_DEFINE_BOOL(native_x_renderer_recorded_draws, true, "NativeXRenderer",
+ REXCVAR_DEFINE_BOOL(native_x_renderer_predicated_constants, false, "NativeXRenderer",
+                     "Bin-predicated SET_CONSTANT float constant writes (inside tiled passes) are applied in order, "
+                     "like unpredicated ones (D133)");
++REXCVAR_DEFINE_BOOL(native_x_renderer_predicated_indirect, false, "NativeXRenderer",
++                    "Bin-predicated INDIRECT_BUFFERs (RunCommandBuffer's recorded buffers) are followed (D134; off: "
++                    "log 009, a bad shader and a crash; D135)");
+ 
+ #ifdef _WIN32
+ #ifndef WIN32_LEAN_AND_MEAN
+@@ -104,9 +107,12 @@ void Initialize(const Profile& profile, rex::system::IGraphicsSystem* graphics,
+     g_tracker->set_keep_record(g_renderer);
+     g_tracker->set_split_recorded_draws(REXCVAR_GET(native_x_renderer_recorded_draws));
+     StateTracker::set_apply_predicated_constants(REXCVAR_GET(native_x_renderer_predicated_constants));
+-    REXLOG_INFO("[native_x_renderer] recorded command buffers' draws: {}; predicated float constants: {} (D133)",
++    StateTracker::set_follow_predicated_indirect(REXCVAR_GET(native_x_renderer_predicated_indirect));
++    REXLOG_INFO("[native_x_renderer] recorded command buffers' draws: {}; predicated float constants: {}; "
++                "predicated indirect buffers: {} (D133-D135)",
+                 REXCVAR_GET(native_x_renderer_recorded_draws) ? "drawn" : "not drawn",
+-                REXCVAR_GET(native_x_renderer_predicated_constants) ? "applied" : "ignored");
++                REXCVAR_GET(native_x_renderer_predicated_constants) ? "applied" : "ignored",
++                REXCVAR_GET(native_x_renderer_predicated_indirect) ? "followed" : "not followed");
+   }
+   detail::g_hooks_active = g_trace || g_observer || g_renderer;
+ }
+diff --git a/src/state.cpp b/src/state.cpp
+index 52bd1ed..61a3dc7 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -60,6 +60,12 @@ uint32_t ConstantBase(uint32_t type) {
+ 
+ // D133: bin-predicated float constant writes applied (StateTracker::set_apply_predicated_constants).
+ std::atomic<bool> g_apply_predicated_constants{false};
++// D135: bin-predicated INDIRECT_BUFFERs followed (D134; StateTracker::set_follow_predicated_indirect).
++std::atomic<bool> g_follow_predicated_indirect{false};
++// D135: the first followed indirect buffers and the shader loads inside them, logged (a bad shader, log 009).
++std::atomic<int> g_indirect_logs{0}, g_load_logs{0};
++bool LogIndirect() { return g_indirect_logs.fetch_add(1, std::memory_order_relaxed) < 32; }
++bool LogLoad() { return g_load_logs.fetch_add(1, std::memory_order_relaxed) < 64; }
+ 
+ // DRAW_INDX (viz query token, then as DRAW_INDX_2) and DRAW_INDX_2 (VGT_DRAW_INITIATOR, then VGT_DMA_BASE
+ // and VGT_DMA_SIZE for DMA indices): the command processor writes these registers from the packet
+@@ -124,7 +130,7 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+           // touches); the draw is the same in every bin.
+           ++out.predicated;
+           ScanDraw(base, opcode, p, count, out);
+-        } else if ((header & 1) && opcode != 0x3F) {
++        } else if ((header & 1) && !(opcode == 0x3F && g_follow_predicated_indirect.load(std::memory_order_relaxed))) {
+           // A bin-predicated INDIRECT_BUFFER is followed below like any other (D134: RunCommandBuffer predicates
+           // every one, 0xC0013F01; the GPU runs the same buffer in each bin).
+           ++out.predicated;  // bin-predicated: per tile
+@@ -172,6 +178,12 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+               uint32_t dwords = start_size & 0xFFFF;
+               if (immediate && dwords > count - 2) dwords = count - 2;
+               const auto* ucode = reinterpret_cast<const uint32_t*>(GuestPointer(base, address));
++              if (depth > 0 && LogLoad()) {
++                REXLOG_INFO("[native_x_renderer] D135: shader load in an indirect buffer (depth {}): packet {:08X} {} "
++                            "type {} address {:08X} start {} dwords {} hash {:016X}",
++                            depth, p - 4, immediate ? "IM_LOAD_IMMEDIATE" : "IM_LOAD", type & 3, address,
++                            start_size >> 16, dwords, XXH3_64bits(ucode, size_t(dwords) * 4));
++              }
+               if (copy_microcode) {
+                 out.shader_loads.push_back(
+                     {type & 3, address, dwords, p - 4, immediate, uint32_t(out.shader_ucode.size())});
+@@ -185,6 +197,10 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+               uint32_t target = PhysicalToVirtual(Load32(base, p));
+               uint32_t length = Load32(base, p + 4) & 0xFFFFF;
+               ++out.indirect;
++              if ((header & 1) && LogIndirect()) {
++                REXLOG_INFO("[native_x_renderer] D135: predicated INDIRECT_BUFFER at {:08X} (depth {}): {:08X}, {} "
++                            "dwords{}", p - 4, depth, target, length, depth < 2 ? "" : ", not followed");
++              }
+               // D133: and one level more, for the command buffers the game recorded (RunCommandBuffer: the ring's
+               // INDIRECT_BUFFER per segment, then those the recorded buffer calls).
+               if (depth < 2) {
+@@ -254,6 +270,7 @@ void PacketScan::Clear() {
+ const StateTracker::Program StateTracker::kNoProgram{};
+ 
+ void StateTracker::set_apply_predicated_constants(bool on) { g_apply_predicated_constants.store(on); }
++void StateTracker::set_follow_predicated_indirect(bool on) { g_follow_predicated_indirect.store(on); }
+ 
+ StateTracker::StateTracker(const Profile& profile)
+     : profile_(profile), registers_(std::make_unique<rex::graphics::RegisterFile>()) {
+diff --git a/src/state.h b/src/state.h
+index 4789d9c..d8ad4cd 100644
+--- a/src/state.h
++++ b/src/state.h
+@@ -142,6 +142,8 @@ class StateTracker {
+   void set_split_recorded_draws(bool on) { split_recorded_draws_ = on; }
+   // D133: bin-predicated SET_CONSTANT float constant writes are applied in order, like unpredicated ones.
+   static void set_apply_predicated_constants(bool on);
++  // D135: bin-predicated INDIRECT_BUFFERs are followed (D134), off by default (log 009: a bad shader, a crash).
++  static void set_follow_predicated_indirect(bool on);
+ 
+   void Enter(Call call, uint32_t device, const uint8_t* base, bool nested);
+   // The finished call if it was an outermost device call, else nullptr. Valid until the next Leave.
+-- 
+2.43.0
+
