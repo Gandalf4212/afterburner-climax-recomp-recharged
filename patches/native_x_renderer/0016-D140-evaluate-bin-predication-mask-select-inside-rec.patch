@@ -1,0 +1,96 @@
+From 2c2e35a34b6264246c0f14b8d6c8b349f63cae3e Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 21:04:39 -0500
+Subject: [PATCH] D140: evaluate bin predication (mask & select) inside
+ recorded buffers
+
+---
+ docs/decisions.md | 10 ++++++++++
+ src/state.cpp     | 28 +++++++++++++++++++++++++---
+ 2 files changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 017935a..5f853b8 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4502,3 +4502,13 @@ state with bin-predicated SET_CONSTANT packets (their first: C0032D01 00040080,
+ which the tracker kept aside. Inside an indirect buffer (depth > 0) every predicated SET_CONSTANT is now applied in
+ order (float constants too, whatever `native_x_renderer_predicated_constants` says), except PA_SC_WINDOW_OFFSET and
+ the window scissor, which differ per tile. Predicated packets in the ring are as before.
++
++## D140 — Bin predication evaluated inside recorded buffers (2026-11-09)
++Log 015 (D139): 46 of 76 replayed draws clean; the other 30 now have RB_COLOR_MASK 0xF where the GPU has 0x7. A
++predicated packet runs only when (bin mask & bin select) != 0: the recorded buffers set their mask (they start with
++SET_BIN_MASK_HI 0, SET_BIN_MASK_LO 3), BeginTiling's helper 8223EFA0 sets MASK from device+12884/12888 with
++SELECT_LO = 0xFFFFFFFF, SELECT_HI = 0, and RunCommandBuffer writes SET_BIN_SELECT_HI = its predicationSelect argument
++(8224997C) before the replay: the game picks a buffer's state variant with it. The tracker now follows the bin mask
++and select from the packets it reads (0x60-0x63; all bins until set) and, inside indirect buffers, reads a
++predicated SET_CONSTANT or draw, and follows a predicated INDIRECT_BUFFER, only when the predicate passes. The
++per-tile SELECT_LO the primary ring sets (8225C5C0) is not seen: every tile passes.
+diff --git a/src/state.cpp b/src/state.cpp
+index 57f82a0..4efe0d8 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -66,6 +66,12 @@ std::atomic<bool> g_apply_predicated_constants{false};
+ // D135: bin-predicated INDIRECT_BUFFERs followed (D134; StateTracker::set_follow_predicated_indirect).
+ std::atomic<bool> g_follow_predicated_indirect{false};
+ // D135: the first followed indirect buffers and the shader loads inside them, logged (a bad shader, log 009).
++// D140: the GPU's bin mask and select (SET_BIN_MASK_LO/HI 0x60/0x61, SET_BIN_SELECT_LO/HI 0x62/0x63), as the
++// packets read so far set them (game thread). A bin-predicated packet runs when (mask & select) != 0. Unknown at
++// start: all bins.
++uint64_t g_bin_mask = ~uint64_t(0), g_bin_select = ~uint64_t(0);
++bool PredicatePasses() { return (g_bin_mask & g_bin_select) != 0; }
++
+ // D136: the indirect buffers summarized so far (game thread only).
+ std::unordered_set<uint32_t> g_indirect_targets;
+ bool NewIndirectTarget(uint32_t target) { return g_indirect_targets.size() < 48 && g_indirect_targets.insert(target).second; }
+@@ -129,12 +135,16 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+         uint32_t opcode = (header >> 8) & 0x7F;
+         uint32_t count = ((header >> 16) & 0x3FFF) + 1;
+         if (p + 4 * count > end) return void(out.complete = false);
++        // D140: inside a recorded command buffer, a predicated packet is read only if the GPU runs it (the game
++        // selects which of a buffer's state variants applies with RunCommandBuffer's predicationSelect).
++        const bool passes = !(header & 1) || PredicatePasses();
+         if ((header & 1) && (opcode == 0x22 || opcode == 0x36)) {
+           // The XDK bin-predicates every draw packet, tiled or not (the GPU runs it in each bin it
+           // touches); the draw is the same in every bin.
+           ++out.predicated;
+-          ScanDraw(base, opcode, p, count, out);
+-        } else if ((header & 1) && !(opcode == 0x3F && g_follow_predicated_indirect.load(std::memory_order_relaxed))) {
++          if (depth == 0 || passes) ScanDraw(base, opcode, p, count, out);
++        } else if ((header & 1) && !(opcode == 0x3F && passes &&
++                                     g_follow_predicated_indirect.load(std::memory_order_relaxed))) {
+           // A bin-predicated INDIRECT_BUFFER is followed below like any other (D134: RunCommandBuffer predicates
+           // every one, 0xC0013F01; the GPU runs the same buffer in each bin).
+           ++out.predicated;  // bin-predicated: per tile
+@@ -149,7 +159,7 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+             // 0x7, log 014): applied in order, except the window offset and scissor, which differ per tile.
+             const bool apply = is_float ? (depth > 0 || g_apply_predicated_constants.load(std::memory_order_relaxed))
+                                         : depth > 0;
+-            if (apply && !SkippedConstants(skip_constants, reg, count - 1)) {
++            if (apply && passes && !SkippedConstants(skip_constants, reg, count - 1)) {
+               for (uint32_t i = 1; i < count; ++i) {
+                 uint32_t r = reg + i - 1;
+                 if (r >= kPaScWindowOffset && r <= kPaScWindowScissorBr) continue;
+@@ -232,6 +242,18 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+               out.complete = out.complete && c0;
+               break;
+             }
++            case 0x60:  // SET_BIN_MASK_LO (D140)
++              g_bin_mask = (g_bin_mask & ~uint64_t(0xFFFFFFFF)) | Load32(base, p);
++              break;
++            case 0x61:  // SET_BIN_MASK_HI
++              g_bin_mask = (g_bin_mask & 0xFFFFFFFF) | (uint64_t(Load32(base, p)) << 32);
++              break;
++            case 0x62:  // SET_BIN_SELECT_LO
++              g_bin_select = (g_bin_select & ~uint64_t(0xFFFFFFFF)) | Load32(base, p);
++              break;
++            case 0x63:  // SET_BIN_SELECT_HI
++              g_bin_select = (g_bin_select & 0xFFFFFFFF) | (uint64_t(Load32(base, p)) << 32);
++              break;
+             case 0x22:  // DRAW_INDX
+             case 0x36:  // DRAW_INDX_2
+               ScanDraw(base, opcode, p, count, out);
+-- 
+2.43.0
+

@@ -195,6 +195,9 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
 - [ ] Log 014 + snap3 (D138 verify): 228 GPU executions of 76 replayed draws matched, 19 fully clean, the rest
       RB_COLOR_MASK cpu 0x7 / gpu 0xF; the jet now shows as smoke trails and black nozzles. D139 (patch 0015): a
       recorded buffer's bin-predicated SET_CONSTANTs are applied (not the window offset/scissor).
+- [ ] Log 015 (D139): no jet; 46 of 76 replays clean, 30 with RB_COLOR_MASK 0xF vs GPU 0x7: predicated writes are
+      conditional. RunCommandBuffer writes SET_BIN_SELECT_HI = predicationSelect (8224997C); 8223EFA0 sets mask
+      and SELECT_LO = -1. D140 (patch 0016): predication evaluated inside recorded buffers.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
