@@ -1,0 +1,145 @@
+From a9e9a2a47c251a3afb2795ede0d686ca9f87143b Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 19:40:35 -0500
+Subject: [PATCH] D136: log new programs from indirect buffers and a summary of
+ each predicated indirect buffer
+
+---
+ docs/decisions.md |  9 ++++++++
+ src/state.cpp     | 54 +++++++++++++++++++++++++++++++++--------------
+ src/state.h       |  1 +
+ 3 files changed, 48 insertions(+), 16 deletions(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 3c3f1b0..9103ceb 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4468,3 +4468,12 @@ the shader cache kept it, and later launches crashed at start. D134 is now cvar
+ size, hash) are logged, to find where the bad microcode comes from. The verifier (observer.cpp) counts as "outside the
+ ring" the GPU draw packets outside every tracked call's packets, not matched to a call: the jets are drawn only by
+ replays, never seen at record time.
++
++## D136 — Diagnostics: new programs from indirect buffers, a summary of each predicated one (2026-11-09)
++Log 010 (predicated_indirect on): more broken draws, "Unknown ALU scalar operation" (vertex C102E4A6B7EFB781),
++"Unsupported primitive type 0", then the driver crash. D135's 64 shader-load lines all went to one prebuilt buffer
++(IM_LOAD_IMMEDIATE at B01EA3E8, every frame). Now: every new program read from an indirect buffer is logged once
++(hash, depth, call, packet, address, size, first dwords; the first 200), so a failed translation's hash leads to its
++packet; and the first 48 distinct predicated INDIRECT_BUFFER targets are summarized (first 6 dwords, writes, shader
++loads, draws and the first draw initiator, nested and predicated packets, read to the end or not), to tell recorded
++buffers from memory misread as packets (stale ring laps, D102).
+diff --git a/src/state.cpp b/src/state.cpp
+index 61a3dc7..9897635 100644
+--- a/src/state.cpp
++++ b/src/state.cpp
+@@ -12,6 +12,7 @@
+ 
+ #include <algorithm>
+ #include <atomic>
++#include <unordered_set>
+ #include <bit>
+ #include <cstring>
+ #include <iterator>
+@@ -63,9 +64,10 @@ std::atomic<bool> g_apply_predicated_constants{false};
+ // D135: bin-predicated INDIRECT_BUFFERs followed (D134; StateTracker::set_follow_predicated_indirect).
+ std::atomic<bool> g_follow_predicated_indirect{false};
+ // D135: the first followed indirect buffers and the shader loads inside them, logged (a bad shader, log 009).
+-std::atomic<int> g_indirect_logs{0}, g_load_logs{0};
+-bool LogIndirect() { return g_indirect_logs.fetch_add(1, std::memory_order_relaxed) < 32; }
+-bool LogLoad() { return g_load_logs.fetch_add(1, std::memory_order_relaxed) < 64; }
++// D136: the indirect buffers summarized so far (game thread only).
++std::unordered_set<uint32_t> g_indirect_targets;
++bool NewIndirectTarget(uint32_t target) { return g_indirect_targets.size() < 48 && g_indirect_targets.insert(target).second; }
++std::atomic<int> g_program_logs{0};
+ 
+ // DRAW_INDX (viz query token, then as DRAW_INDX_2) and DRAW_INDX_2 (VGT_DRAW_INITIATOR, then VGT_DMA_BASE
+ // and VGT_DMA_SIZE for DMA indices): the command processor writes these registers from the packet
+@@ -178,18 +180,13 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+               uint32_t dwords = start_size & 0xFFFF;
+               if (immediate && dwords > count - 2) dwords = count - 2;
+               const auto* ucode = reinterpret_cast<const uint32_t*>(GuestPointer(base, address));
+-              if (depth > 0 && LogLoad()) {
+-                REXLOG_INFO("[native_x_renderer] D135: shader load in an indirect buffer (depth {}): packet {:08X} {} "
+-                            "type {} address {:08X} start {} dwords {} hash {:016X}",
+-                            depth, p - 4, immediate ? "IM_LOAD_IMMEDIATE" : "IM_LOAD", type & 3, address,
+-                            start_size >> 16, dwords, XXH3_64bits(ucode, size_t(dwords) * 4));
+-              }
+               if (copy_microcode) {
+-                out.shader_loads.push_back(
+-                    {type & 3, address, dwords, p - 4, immediate, uint32_t(out.shader_ucode.size())});
++                out.shader_loads.push_back({type & 3, address, dwords, p - 4, immediate,
++                                            uint32_t(out.shader_ucode.size()), uint32_t(depth)});
+                 out.shader_ucode.insert(out.shader_ucode.end(), ucode, ucode + dwords);
+               } else {
+-                out.shader_loads.push_back({type & 3, address, dwords, p - 4, immediate, PacketScan::kInGuestMemory});
++                out.shader_loads.push_back(
++                    {type & 3, address, dwords, p - 4, immediate, PacketScan::kInGuestMemory, uint32_t(depth)});
+               }
+               break;
+             }
+@@ -197,15 +194,32 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan&
+               uint32_t target = PhysicalToVirtual(Load32(base, p));
+               uint32_t length = Load32(base, p + 4) & 0xFFFFF;
+               ++out.indirect;
+-              if ((header & 1) && LogIndirect()) {
+-                REXLOG_INFO("[native_x_renderer] D135: predicated INDIRECT_BUFFER at {:08X} (depth {}): {:08X}, {} "
+-                            "dwords{}", p - 4, depth, target, length, depth < 2 ? "" : ", not followed");
+-              }
++              // D136: each new buffer's summary, once (the first 48): to tell recorded buffers from misread ones.
++              const bool summarize = (header & 1) && depth < 2 && NewIndirectTarget(target);
++              const size_t w0 = out.writes.size(), s0 = out.shader_loads.size();
++              const uint32_t d0 = out.draws, i0 = out.indirect, pr0 = out.predicated;
++              const bool c0 = out.complete;
++              out.complete = true;
+               // D133: and one level more, for the command buffers the game recorded (RunCommandBuffer: the ring's
+               // INDIRECT_BUFFER per segment, then those the recorded buffer calls).
+               if (depth < 2) {
+                 ScanPackets(base, target, target + 4 * length, out, depth + 1, skip_constants, copy_microcode);
+               }
++              if (summarize) {
++                uint32_t initiator = 0;
++                for (size_t w = w0; w < out.writes.size() && !initiator; ++w) {
++                  if (out.writes[w].first == kVgtDrawInitiator) initiator = out.writes[w].second;
++                }
++                REXLOG_INFO("[native_x_renderer] D136: predicated INDIRECT_BUFFER at {:08X} (depth {}) -> {:08X}, {} "
++                            "dwords: {:08X} {:08X} {:08X} {:08X} {:08X} {:08X}; {} writes, {} shader loads, {} draws "
++                            "(first initiator {:08X}), {} indirect, {} predicated, {}",
++                            p - 4, depth, target, length, Load32(base, target), Load32(base, target + 4),
++                            Load32(base, target + 8), Load32(base, target + 12), Load32(base, target + 16),
++                            Load32(base, target + 20), out.writes.size() - w0, out.shader_loads.size() - s0,
++                            out.draws - d0, initiator, out.indirect - i0, out.predicated - pr0,
++                            out.complete ? "read to its end" : "NOT read to its end");
++              }
++              out.complete = out.complete && c0;
+               break;
+             }
+             case 0x22:  // DRAW_INDX
+@@ -665,6 +679,14 @@ void StateTracker::Gather(const Pending& p, Call call, bool draw, const uint8_t*
+       program->loaded_by = call;
+       program->packet = load.packet;
+       program->immediate = load.immediate;
++      if (load.depth && g_program_logs.fetch_add(1, std::memory_order_relaxed) < 200) {
++        // D136: a new program from an indirect buffer: its hash matches a failed translation's.
++        REXLOG_INFO("[native_x_renderer] D136: new {} program {:016X} from an indirect buffer (depth {}), call {}: "
++                    "packet {:08X} {} address {:08X}, {} dwords, first {:08X} {:08X} {:08X}",
++                    load.type ? "pixel" : "vertex", hash, load.depth, Info(call).name, load.packet,
++                    load.immediate ? "IM_LOAD_IMMEDIATE" : "IM_LOAD", load.address, load.dwords,
++                    load.dwords > 0 ? ucode[0] : 0, load.dwords > 1 ? ucode[1] : 0, load.dwords > 2 ? ucode[2] : 0);
++      }
+       cached = std::move(program);
+     }
+     programs_[load.type] = recent = cached.get();
+diff --git a/src/state.h b/src/state.h
+index d8ad4cd..88e209b 100644
+--- a/src/state.h
++++ b/src/state.h
+@@ -94,6 +94,7 @@ struct PacketScan {
+     uint32_t packet;   // CPU address of the IM_LOAD packet
+     bool immediate;    // IM_LOAD_IMMEDIATE
+     uint32_t ucode_offset;  // where its microcode starts in shader_ucode; kInGuestMemory: at `address` (D72)
++    uint32_t depth = 0;     // D136: 0 in the ring, else the indirect buffer depth it was read at
+   };
+   std::vector<ShaderLoad> shader_loads;
+   // The shader loads' microcode, copied when the packets were read, big-endian, one after the other. One
+-- 
+2.43.0
+

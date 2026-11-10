@@ -21,6 +21,7 @@ draw calls NativeX sees or drawn with wrong state.
 - D135 (0011): D134 is `native_x_renderer_predicated_indirect`, default off (stable, jets invisible). With it on, the
   log lists the first predicated INDIRECT_BUFFERs and the shader loads inside them ("D135:" lines).
 - Crash safety: a crash writes `shaders.cache.bad`; the next launch deletes shaders.cache.
+- Log 010 (on): same failure, D135 logging not useful; D136 (0012) logs "D136:" lines instead.
 - Next: owner runs once with predicated_indirect = true (log). Compare the D135 shader-load lines with the failing
   hash: the bad microcode's packet, address and size show what is misread (a load that is not a program, a start
   offset, a nested buffer, a stale address). Suspects: the IM_LOAD start field (shared instruction memory),
