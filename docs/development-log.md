@@ -182,6 +182,12 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       "Unsupported primitive type 0", driver crash after ~30 s in game. RunCommandBuffer replays seen: predicated
       INDIRECT_BUFFERs to BA31B9E0.. (871-9180 dwords). D135's load log was used up by one prebuilt buffer. D136
       (patch 0012): new programs from indirect buffers and per-buffer summaries logged instead.
+- [ ] Log 011 (predicated_indirect on, D136): the recorded buffers are real (C0006100 00000000 C0006000 00000003
+      C0032D01..., read to their ends, 1-15 indexed tri-strip draws each, no bad shader); draws per frame up
+      (1800: 335 -> 417, 2400: 167 -> 369), all drawn; no jets. Log 012 (+ predicated_constants on): grey thrust,
+      intro effects wrong. Log 008's verifier: the same recorded packets run up to 12x a frame with different VS
+      constants (4, 25, 26, 99, 108). D137 (patch 0013): the constants the game fills after BeginShaderConstantF4
+      (each jet's matrices) are read before RunCommandBuffer, not after its draws.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

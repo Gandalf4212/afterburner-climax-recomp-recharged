@@ -1,0 +1,45 @@
+From 23609148ed309b1c8ca7a73321a7aea8784111e1 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 20:00:05 -0500
+Subject: [PATCH] D137: constants filled after BeginShaderConstantF4 are read
+ before RunCommandBuffer
+
+---
+ docs/decisions.md         | 9 +++++++++
+ src/native_x_renderer.cpp | 3 ++-
+ 2 files changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/docs/decisions.md b/docs/decisions.md
+index 9103ceb..006e34d 100644
+--- a/docs/decisions.md
++++ b/docs/decisions.md
+@@ -4477,3 +4477,12 @@ Log 010 (predicated_indirect on): more broken draws, "Unknown ALU scalar operati
+ packet; and the first 48 distinct predicated INDIRECT_BUFFER targets are summarized (first 6 dwords, writes, shader
+ loads, draws and the first draw initiator, nested and predicated packets, read to the end or not), to tell recorded
+ buffers from memory misread as packets (stale ring laps, D102).
++
++## D137 — Constants filled after BeginShaderConstantF4 are read before RunCommandBuffer (2026-11-09)
++With D134 and D136 (log 011) the recorded buffers read cleanly to their ends and their draws are drawn (frame 1800:
++335 -> 417 draws), yet no jets. Log 008's verifier shows the same recorded draw packets run up to 12 times a frame with
++different VS float constants (4, 25, 26, 99, 108: matrices): the game fills each jet's constants with
++BeginShaderConstantF4 (bin-predicated SET_CONSTANT, D130) and then calls RunCommandBuffer. D130 read those filled
++packets only before draws, clears, resolves and frame ends, so a replay's draws took the previous jet's (or stale)
++constants and the filled ones were applied after them (log 012, predicated_constants on: grey thrust, other effects
++wrong). RunCommandBuffer now takes the filled packets first.
+diff --git a/src/native_x_renderer.cpp b/src/native_x_renderer.cpp
+index 9e09255..52039f1 100644
+--- a/src/native_x_renderer.cpp
++++ b/src/native_x_renderer.cpp
+@@ -178,7 +178,8 @@ void Enter(Call call, PPCContext& ctx, uint8_t* base) {
+       // uses them or ends the frame (the game may call setters while it fills them: After Burner Climax).
+       const bool uses_constants = (info.flags & (internal::kDraw | internal::kFrameEnd | internal::kFilledAfter |
+                                                  internal::kInlineBegin)) ||
+-                                  call == Call::kResolve || call == Call::kClear || call == Call::kClearF;
++                                  call == Call::kResolve || call == Call::kClear || call == Call::kClearF ||
++                                  call == Call::kRunCommandBuffer;  // D137: its recorded draws use them
+       if (uses_constants) {
+         if (const TrackedCall* filled = g_tracker->TakeFilledPackets(base)) {
+           if (g_observer) observer::OnLeave(*filled, *g_tracker);
+-- 
+2.43.0
+
