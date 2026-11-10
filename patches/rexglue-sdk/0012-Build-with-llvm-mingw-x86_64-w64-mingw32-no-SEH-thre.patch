@@ -1,0 +1,71 @@
+From bc596e397c76ce2ed8f010105966f24164a0b7cd Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Mon, 9 Nov 2026 23:17:40 -0500
+Subject: [PATCH] Build with llvm-mingw (x86_64-w64-mingw32): no SEH thread
+ naming, FARPROC casts, no endian.h on Windows
+
+---
+ src/core/threading_win.cpp               |  4 ++++
+ src/input/xinput/xinput_input_driver.cpp | 12 ++++++------
+ thirdparty/crypto/sha256.cpp             |  2 +-
+ 3 files changed, 11 insertions(+), 7 deletions(-)
+
+diff --git a/src/core/threading_win.cpp b/src/core/threading_win.cpp
+index 896dfec..bbe12e2 100644
+--- a/src/core/threading_win.cpp
++++ b/src/core/threading_win.cpp
+@@ -56,11 +56,15 @@ void raise_thread_name_exception(HANDLE thread, const std::string& name) {
+   info.szName = name.c_str();
+   info.dwThreadID = ::GetThreadId(thread);
+   info.dwFlags = 0;
++#if defined(_MSC_VER)  // SEH: MSVC and clang-cl; mingw (llvm-mingw) names threads with SetThreadDescription only
+   __try {
+     RaiseException(0x406D1388, 0, sizeof(info) / sizeof(ULONG_PTR),
+                    reinterpret_cast<ULONG_PTR*>(&info));
+   } __except (EXCEPTION_EXECUTE_HANDLER) {  // NOLINT
+   }
++#else
++  (void)info;
++#endif
+ }
+ 
+ static void set_thread_name_impl(HANDLE thread, const std::string_view name) {
+diff --git a/src/input/xinput/xinput_input_driver.cpp b/src/input/xinput/xinput_input_driver.cpp
+index 635d69f..9d4fb67 100644
+--- a/src/input/xinput/xinput_input_driver.cpp
++++ b/src/input/xinput/xinput_input_driver.cpp
+@@ -115,12 +115,12 @@ X_STATUS XinputInputDriver::Setup() {
+   }
+ 
+   module_ = module;
+-  XInputGetCapabilities_ = xigc;
+-  XInputGetState_ = xigs;
+-  XInputGetStateEx_ = xigsEx;
+-  XInputGetKeystroke_ = xigk;
+-  XInputSetState_ = xiss;
+-  XInputEnable_ = xie;
++  XInputGetCapabilities_ = reinterpret_cast<void*>(xigc);
++  XInputGetState_ = reinterpret_cast<void*>(xigs);
++  XInputGetStateEx_ = reinterpret_cast<void*>(xigsEx);
++  XInputGetKeystroke_ = reinterpret_cast<void*>(xigk);
++  XInputSetState_ = reinterpret_cast<void*>(xiss);
++  XInputEnable_ = reinterpret_cast<void*>(xie);
+ 
+   return X_STATUS_SUCCESS;
+ }
+diff --git a/thirdparty/crypto/sha256.cpp b/thirdparty/crypto/sha256.cpp
+index e96b4da..a3c8374 100644
+--- a/thirdparty/crypto/sha256.cpp
++++ b/thirdparty/crypto/sha256.cpp
+@@ -8,7 +8,7 @@
+ #include "sha256.h"
+ 
+ // big endian architectures need #define __BYTE_ORDER __BIG_ENDIAN
+-#ifndef _MSC_VER
++#if !defined(_MSC_VER) && !defined(_WIN32)  // Windows (MSVC or mingw) is little-endian: no endian.h
+ #if defined(__APPLE__)
+ #if !defined(__BYTE_ORDER) && defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__)
+ #define __BYTE_ORDER __BYTE_ORDER__
+-- 
+2.43.0
+

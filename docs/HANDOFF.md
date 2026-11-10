@@ -12,6 +12,58 @@ to Xenia; build 42503819109 (bedf762) is the first that forces NativeX. Deleting
 help. Log 007 (owner's F:\claude2\abc): every draw call drawn, 0 failed or skipped, so the jets' draws are either not
 draw calls NativeX sees or drawn with wrong state.
 
+## Session 3 end (2026-11-09 23:20): open bugs, launcher status
+
+### Open rendering bugs (track these down next)
+1. **Stage 3 desert ground: flat beige, no texture** (owner's log 004 of build e3cd1f3, screenshot in chat). The F10
+   verifier shows every draw's state = the GPU's (replays: render state, fetch, textures, programs, VS constants; only
+   PS c40-c43 differ, the per-tile constants). So the inputs are right and the renderer draws it wrong. Prime
+   suspect: `EndTiling with a resolve destination: not supported yet` (renderer.cpp ExecuteEndTiling, logged once
+   per run, every run). The game's EndTiling resolves the tiled scene into a texture, and NativeX skips that copy; a
+   ground/fog/depth-blend shader reading it sees nothing. Fix: route EndTiling's resolve through the Resolve path
+   (CaptureResolve/ExecuteResolve). Note src/native_x_renderer_abc.cpp: this game's EndTiling wrapper (82167680)
+   passes a pointer as the second argument, so map the real arguments (flags, rects, dest texture) first. The earlier
+   grey water (fixed by D143) looked similar, so check other stages for flat-colored surfaces too.
+2. **PS c40-c43 per tile:** the GPU sets them per tile (screen offsets; values like 256.0, 480.0); NativeX draws
+   the scene once and keeps whatever the packets left. Harmless so far; watch shaders that use screen position.
+3. **"Texture fetch constant ... has invalid type"** (2-3 per run): from the SDK's texture path, never investigated.
+4. Unverified: Select and the left stick in the F1 menu (build 7c2df02), the blue shader-compile screen (delete
+   shaders.cache to see it), the F1 pause, the 65,532-index split (no draw that large seen yet).
+
+### How to find such bugs
+- Run with `--recomp_log=true --native_x_renderer_verify=true`; F10 verifies one frame per press, so press it on
+  each screen to check. "D138: replayed draws ... N of M fully match" covers RunCommandBuffer's recorded draws; the
+  mismatch lists below it say which state is wrong. All state matching but a wrong picture = a renderer gap.
+- **Owner's idea: an unlimited-lives (armor) cheat** so every stage can be reached and checked. To do: find the
+  armor variable (the HUD's ARMOR %), e.g. with ppc_index.py on the code that draws or decrements it, or by a memory
+  diff between hits, then add a menu toggle (F1 > a Cheats tab) that holds it at 100 %.
+
+### Launcher: status (owner chose: LLVM toolchain like Witch Time, one locally linked exe)
+- Decision: ship a trimmed **llvm-mingw** (clang + lld + libc++ + mingw-w64 headers/libs; Apache-2.0 with LLVM
+  exception, no GPL source bundle). CI builds the SDK, NativeX, DiligentCore and FFmpeg as static libraries with it;
+  the player's PC compiles generated/ + src/ and links one exe with lld. Witch Time (github.com/Zexyen/Witch-Time,
+  tools/wtbuild/README.md) does the same with LLVM's release + llvm-mingw builtins, but splits game.dll / exe; we
+  do not (ReXGlue hooks override generated functions at link time).
+- **Done:** the SDK, NativeX, DiligentCore and FFmpeg compile for x86_64-w64-mingw32 (cross-compiled on Linux with
+  clang-18 + Ubuntu mingw-w64). Fixes: patches/rexglue-sdk/0012 (no SEH thread naming outside MSVC, FARPROC casts,
+  no endian.h on Windows), patches/ffmpeg/0002 (HAVE_LIBC_MSVCRT 0 under mingw). Both keep the MSVC build unchanged.
+  Configure with `-DREXGLUE_USE_D3D12=OFF` (mingw-w64 lacks DXProgrammableCapture.h; the game uses Vulkan).
+- Local cross-compile recipe (2 cores, about 30 min): tools/mingw-cross-toolchain.cmake; configure as in
+  build-windows.yml plus `-DCMAKE_TOOLCHAIN_FILE=... -DREXGLUE_USE_D3D12=OFF`; if googlesource is unreachable,
+  `-DFETCHCONTENT_SOURCE_DIR_ABSEIL-CPP=<empty dir with empty CMakeLists.txt>` (abseil is only for Dawn/WebGPU,
+  which NativeX turns off). Linux-only artefacts, not real problems: header case (Windows.h vs windows.h: add
+  case-variant symlinks via -isystem), std::expected (Ubuntu libstdc++; llvm-mingw's libc++ has it),
+  SetThreadDescription (old Ubuntu mingw-w64 headers).
+- **Next steps, in order:**
+  1. CI job on windows-latest (or Linux) with real llvm-mingw (mstorsjo/llvm-mingw ucrt release): build the libs,
+     then the whole game once with it, to prove the exe links and runs (expect link issues: rexruntime is a DLL today).
+  2. Package the prebuilt .a libraries + headers + trimmed llvm-mingw + rexglue.exe (codegen; can stay MSVC-built).
+  3. Launcher exe: owner's spec: **blue theme, rounded corners, the settings menu's font; if the game is not found
+     next to it, an Import button opens a file dialog**; controller + keyboard. Verify the package (CRC32) and
+     default.xex (SHA-1 a066b2d6..., 2,293,760 bytes), extract (package_setup.cpp), run codegen, compile, link into
+     assets\, write assets\build.log, show progress, then start the game.
+  4. CI release: launcher + prebuilt libs + toolchain; remove generated/ from the repo; README.
+
 ## Session 3 (2026-11-09): jets fixed
 The jets and the near water were drawn only by `RunCommandBuffer` (822496E0) replaying recorded command buffers.
 NativeX D133-D144 (patches 0009-0020): the replays' draws are split and handed on (D133); their predicated
