@@ -1,6 +1,7 @@
 # CLAUDE.md: After Burner Climax Recomp (Recharged)
 
-Read `docs/HANDOFF.md` first (current state, next steps), then `docs/architecture.md` (files and functions),
+Read `docs/HANDOFF.md` first (current state, next steps) and, for the missing stage 2/3 terrain,
+`docs/terrain-investigation.md` (what is already ruled out), then `docs/architecture.md` (files and functions),
 `docs/development-log.md` (history, decisions) and `docs/native-x-renderer.md` (the D3D map) as needed.
 
 ## Working rules (from the owner)
