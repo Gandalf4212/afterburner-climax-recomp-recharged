@@ -315,6 +315,11 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       z=1, color f4dab9 (the beige). Snap13 shows the sky through where the canyon walls are: no pixels at all (not
       fog). D153 (patch 0029, test) forces those draws visible. Its first build crashed (log 036): ScopedRegisters
       held 8 overrides, a tiled forced draw sets 9; now 16.
+- [ ] Session 4, D153 result (log 037): the forced-visible terrain draws (VS 4CB480, 4 logged) still show nothing:
+      no pixels are produced. The SPIR-V vfetch (stride 0 = the element at the base, minis from the last full
+      fetch's address) and the 32 fetch constants' upload check out; the D152 readback read guest memory, not the
+      mirror. Suspect: a stale mirror copy of the stage 2/3 terrain buffers (loaded into memory the mirror copied
+      before, without an invalidation). D154 (patch 0030): F7 invalidates the whole mirror once.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
