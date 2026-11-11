@@ -1,0 +1,70 @@
+From 08a9c5f847501e67f980c6d2c9bb5de6bffa6682 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Tue, 10 Nov 2026 20:05:32 -0500
+Subject: [PATCH] D150: native_x_renderer_log_shaders writes chosen shaders'
+ disassembly to the log
+
+After Burner Climax (session 4): stage 1's terrain (VS D9036E826C687B36)
+draws, stage 2/3's (VS 4CB48051EDE053AA, same pixel shader and identical
+registers, F8) does not. The hashes the F8 dump shows, comma-separated;
+each is logged once, when first analyzed.
+---
+ src/shaders.cpp | 26 ++++++++++++++++++++++++++
+ 1 file changed, 26 insertions(+)
+
+diff --git a/src/shaders.cpp b/src/shaders.cpp
+index 9fced99..de468e9 100644
+--- a/src/shaders.cpp
++++ b/src/shaders.cpp
+@@ -5,8 +5,11 @@
+ #include "spirv_patch.h"
+ #include "storage.h"
+ 
++#include <rex/cvar.h>
+ #include <rex/logging.h>
+ 
++#include <cctype>
++#include <fmt/format.h>
+ #include <algorithm>
+ #include <chrono>
+ #include <exception>
+@@ -21,6 +24,10 @@ namespace native_x_renderer {
+ using namespace Diligent;
+ namespace rg = rex::graphics;
+ 
++REXCVAR_DEFINE_STRING(native_x_renderer_log_shaders, "", "NativeXRenderer",
++                      "D150: microcode hashes (16 hex digits, as the F8 draw dump shows them, comma-separated) whose "
++                      "disassembly is written to the log when the shader is first analyzed");
++
+ namespace {
+ 
+ // The SDK's analysis throws on some invalid microcode and dereferences null on other (a texture fetch
+@@ -128,6 +135,25 @@ rg::SpirvShader* ShaderCache::Get(rg::xenos::ShaderType type, const uint32_t* uc
+     std::lock_guard<std::mutex> lock(times_mutex_);
+     times_.analysis.Add(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
+   }
++  if (shader) {
++    // D150: the disassembly of the shaders asked for (native_x_renderer_log_shaders), one log line per line.
++    const std::string& wanted = REXCVAR_GET(native_x_renderer_log_shaders);
++    std::string name = fmt::format("{:016X}", hash);
++    std::string upper = wanted;
++    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return char(std::toupper(c)); });
++    if (!wanted.empty() && upper.find(name) != std::string::npos) {
++      const std::string& text = shader->ucode_disassembly();
++      REXLOG_INFO("[native_x_renderer] D150: {} shader {} ({} dwords) disassembly:",
++                  type == rg::xenos::ShaderType::kVertex ? "vertex" : "pixel", name, dwords);
++      size_t begin = 0;
++      while (begin < text.size()) {
++        size_t end = text.find('\n', begin);
++        if (end == std::string::npos) end = text.size();
++        REXLOG_INFO("[native_x_renderer] D150 {}: {}", name.substr(0, 6), text.substr(begin, end - begin));
++        begin = end + 1;
++      }
++    }
++  }
+   if (shader && storage_) {
+     std::lock_guard<std::mutex> lock(pending_mutex_);
+     pending_shaders_[key].assign(ucode, ucode + dwords);  // stored once a translation succeeds (D145)
+-- 
+2.43.0
+

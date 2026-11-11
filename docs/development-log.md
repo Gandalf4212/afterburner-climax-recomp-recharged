@@ -285,6 +285,13 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       counts every draw drawn (246-321 per frame, 0 failed), so the pixels are lost in the renderer. D149 (patch
       0025): F8 logs the next frame's draws as drawn (targets, viewport, depth/cull/alpha registers, shaders) to
       compare a terrain draw with a jet draw.
+- [ ] Session 4, ruled out for the missing terrain (no change): `gpu_allow_invalid_fetch_constants = true` (log 031;
+      the "invalid" fetches 10F66096 / 12506006 are the 1024x1024 format 22 and 256x256 resolves), D97/D98/D110 and
+      object motion off, the shader cache file off (pipeline_storage false, cache renamed). F8 (log 032, 1x scale):
+      stage 1 terrain = VS D9036E826C687B36 + PS 92AC7F14F7C95B62 (drawn); stage 2 terrain = VS 4CB48051EDE053AA +
+      the same PS, every register identical (stage 1 uses 4CB480 only in a 256x256 pass). Owner: stage 1 terrain is
+      low, stages 2/3 tall. The owner also saw a hit jet vanish while its fire shows. D150 (patch 0026) logs the two
+      vertex shaders' disassembly to compare.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
