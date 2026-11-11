@@ -43,6 +43,9 @@ below is settled unless a new fact contradicts it. Details and evidence: `develo
    Stage2-NativeX-new.rdc still shows the forced state on the terrain pipeline (1303: no depth format, depth off,
    cull none, rendered without a depth attachment, exactly as D153 forces it), so the setting was probably still
    active: confirm the log has no "D153:" line before trusting a capture as the normal case.
+   **Stage2-NativeX-new2.rdc is the clean normal capture** (force_visible off): the terrain pipelines (e.g. 12517,
+   19319; index counts 1322, 1303) have depth format D24_UNORM_S8 (129), back-face culling, depth test and write on,
+   compare LESS, and render with the scene's depth attachment (view 2483) like the buildings. Use it for steps 1-2.
 
 ## Tools
 - F8 draw dump (D149), `native_x_renderer_log_shaders` (D150), `native_x_renderer_inspect_vs` (D152),
