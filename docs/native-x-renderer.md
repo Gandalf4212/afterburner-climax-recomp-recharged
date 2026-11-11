@@ -112,6 +112,7 @@ compiled when first drawn and kept. Draws wait up to 8 ms per frame for those (F
 | 0025 | D149: F8 (`bind_native_x_renderer_draw_dump`) logs the next frame's draws as drawn: targets, viewport, depth/cull/alpha registers, shaders |
 | 0026 | D150: `native_x_renderer_log_shaders` (hashes) logs those shaders' disassembly |
 | 0027 | D151: vertex data uploaded whatever the vertex fetch constant's type says (not texture, not empty); first 8 logged |
+| 0028 | D152: `native_x_renderer_inspect_vs` (hashes): the F8 dump reads those draws back (fetch constants, first vertices and indices, float constants) |
 
 To change NativeX: `git -C thirdparty/native_x_renderer checkout bf965e9 && git am ../../patches/native_x_renderer/*`,
 commit, then `git format-patch bf965e9..HEAD -o ../../patches/native_x_renderer` (replace the old files).

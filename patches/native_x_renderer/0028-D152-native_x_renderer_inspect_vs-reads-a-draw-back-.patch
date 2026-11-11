@@ -1,0 +1,143 @@
+From e89934aa8cf85beacfc2dc359c779483150251f0 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Tue, 10 Nov 2026 20:54:48 -0500
+Subject: [PATCH] D152: native_x_renderer_inspect_vs reads a draw back in the
+ F8 dump
+
+For draws whose vertex shader is listed: the index registers and first
+indices, each vertex fetch constant (type, address, size, endian) with its
+first 24 dwords in guest memory, and float constants c0-c1, c24-c30,
+c80-c83, c102, c105. After Burner Climax (session 4): the stage 2/3
+terrain (VS 4CB48051EDE053AA) is drawn every frame but nothing shows,
+while the old renderer showed it.
+---
+ src/draw.cpp | 57 ++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/draw.h   |  4 ++++
+ 2 files changed, 61 insertions(+)
+
+diff --git a/src/draw.cpp b/src/draw.cpp
+index cff60a0..7a0c9e4 100644
+--- a/src/draw.cpp
++++ b/src/draw.cpp
+@@ -21,11 +21,13 @@
+ #include <rex/graphics/registers.h>
+ #include <rex/graphics/util/draw.h>
+ #include <rex/logging.h>
++#include <rex/system/xmemory.h>
+ 
+ #include <algorithm>
+ #include <bit>
+ #include <cmath>
+ #include <chrono>
++#include <cctype>
+ #include <cstring>
+ #include <fstream>
+ #include <iterator>
+@@ -37,6 +39,9 @@
+ 
+ #include <xxhash.h>
+ 
++REXCVAR_DEFINE_STRING(native_x_renderer_inspect_vs, "", "NativeXRenderer",
++                      "D152: vertex shader hashes (as F8 shows them, comma-separated) whose draws the F8 dump reads "
++                      "back: fetch constants, the first vertices and indices in guest memory, the float constants");
+ REXCVAR_DEFINE_INT32(native_x_renderer_draw_log, 0, "NativeXRenderer",
+                      "Bring-up: log the first N draws NativeXRenderer processes (primitive, indices, shaders)");
+ REXCVAR_DEFINE_STRING(native_x_renderer_alpha_to_coverage, "auto", "NativeXRenderer",
+@@ -272,6 +277,7 @@ bool DrawPath::Initialize(Device& device, rg::RegisterFile& registers, rex::memo
+                           const std::filesystem::path& storage, const ShaderCacheSource* source) {
+   device_ = &device;
+   registers_ = &registers;
++  guest_memory_ = &memory;
+   scale_ = scale;
+   IRenderDevice* render_device = device.device();
+   IDeviceContext* context = device.context();
+@@ -793,6 +799,55 @@ std::atomic<bool> g_draw_dump_requested{false};
+ 
+ void DrawPath::RequestDrawDump() { g_draw_dump_requested.store(true); }
+ 
++// D152: the readback of a draw whose vertex shader is listed in native_x_renderer_inspect_vs (F8 dump frames).
++void DrawPath::InspectDraw(const rg::SpirvShader& vertex_shader) {
++  const std::string& wanted = REXCVAR_GET(native_x_renderer_inspect_vs);
++  if (wanted.empty() || inspected_ >= 4 || !guest_memory_) return;
++  std::string name = fmt::format("{:016X}", vertex_shader.ucode_data_hash());
++  std::string upper = wanted;
++  for (char& c : upper) c = char(std::toupper(static_cast<unsigned char>(c)));
++  if (upper.find(name) == std::string::npos) return;
++  ++inspected_;
++  const rg::RegisterFile& regs = *registers_;
++  auto words = [&](uint32_t address, uint32_t count) {
++    std::string out;
++    const auto* p = guest_memory_->TranslatePhysical<const uint32_t*>(address);
++    for (uint32_t i = 0; i < count; ++i) {
++      uint32_t w = rex::byte_swap(p[i]);
++      float f;
++      std::memcpy(&f, &w, 4);
++      out += fmt::format(" {:08X}({:g})", w, f);
++    }
++    return out;
++  };
++  REXLOG_INFO("[native_x_renderer] D152 inspect draw {} VS {}: VGT_INDX_OFFSET {} MIN {} MAX {} DMA_BASE {:08X} "
++              "DMA_SIZE {:08X} initiator {:08X}",
++              dump_index_ + 1, name, regs[rg::XE_GPU_REG_VGT_INDX_OFFSET], regs[rg::XE_GPU_REG_VGT_MIN_VTX_INDX],
++              regs[rg::XE_GPU_REG_VGT_MAX_VTX_INDX], regs[rg::XE_GPU_REG_VGT_DMA_BASE],
++              regs[rg::XE_GPU_REG_VGT_DMA_SIZE], regs[rg::XE_GPU_REG_VGT_DRAW_INITIATOR]);
++  const uint32_t dma = regs[rg::XE_GPU_REG_VGT_DMA_BASE];
++  if (dma) REXLOG_INFO("[native_x_renderer] D152   indices (raw dwords):{}", words(dma & ~3u, 4));
++  const rg::Shader::ConstantRegisterMap& map = vertex_shader.constant_register_map();
++  for (uint32_t i = 0; i < std::size(map.vertex_fetch_bitmap); ++i) {
++    for (uint32_t bit = 0; bit < 32; ++bit) {
++      if (!(map.vertex_fetch_bitmap[i] & (1u << bit))) continue;
++      xenos::xe_gpu_vertex_fetch_t fetch = regs.GetVertexFetch(i * 32 + bit);
++      REXLOG_INFO("[native_x_renderer] D152   vf{}: dwords {:08X} {:08X}: type {} address {:#x} size {} bytes "
++                  "endian {}; first 24 dwords:{}",
++                  i * 32 + bit, fetch.dword_0, fetch.dword_1, uint32_t(fetch.type), fetch.address << 2,
++                  fetch.size << 2, uint32_t(fetch.endian), words(fetch.address << 2, 24));
++    }
++  }
++  auto constant = [&](uint32_t c) {
++    std::string out;
++    for (uint32_t j = 0; j < 4; ++j) out += fmt::format(" {:g}", regs.Get<float>(rg::XE_GPU_REG_SHADER_CONSTANT_000_X + 4 * c + j));
++    return out;
++  };
++  for (uint32_t c : {0u, 1u, 24u, 25u, 26u, 27u, 28u, 29u, 30u, 80u, 81u, 82u, 83u, 102u, 105u}) {
++    REXLOG_INFO("[native_x_renderer] D152   c{}:{}", c, constant(c));
++  }
++}
++
+ void DrawPath::LogDumpedDraw(bool drawn, const std::array<HostTarget*, 5>& targets, bool tiled) {
+   if (++dump_index_ > 3000) return;
+   const rg::RegisterFile& regs = *registers_;
+@@ -1263,6 +1318,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+       memory_->RequestRange(fetch.address << 2, fetch.size << 2);
+     }
+   }
++  if (dump_frames_ > 0) InspectDraw(*vertex_shader);
+   // An inline draw's data, if the game reused its memory since the draw was captured (D71).
+   for (const Copy& copy : copies) {
+     if (memory_->WriteIfChanged(context, copy.address, copy.data, copy.size)) ++stats_.inline_restored;
+@@ -1880,6 +1936,7 @@ void DrawPath::EndFrame() {
+   if (dump_frames_ == 0 && g_draw_dump_requested.exchange(false)) {
+     dump_frames_ = 1;
+     dump_index_ = 0;
++    inspected_ = 0;
+     REXLOG_INFO("[native_x_renderer] D149: draw dump of the next frame (F8)");
+   }
+   // The stored pipelines (D42): created as their shaders get ready; new records written; the pipeline
+diff --git a/src/draw.h b/src/draw.h
+index fb56fc3..f50bd31 100644
+--- a/src/draw.h
++++ b/src/draw.h
+@@ -396,6 +396,10 @@ class DrawPath {
+     float viewport_xywh[4]{}, depth_range[2]{};
+   };
+   DumpInfo dump_;
++  // D152: the guest memory, for the vertex readback of the draw dump (native_x_renderer_inspect_vs).
++  rex::memory::Memory* guest_memory_ = nullptr;
++  uint32_t inspected_ = 0;
++  void InspectDraw(const rex::graphics::SpirvShader& vertex_shader);
+   int dump_frames_ = 0;
+   uint32_t dump_index_ = 0;
+   void LogDumpedDraw(bool drawn, const std::array<HostTarget*, 5>& targets, bool tiled);
+-- 
+2.43.0
+

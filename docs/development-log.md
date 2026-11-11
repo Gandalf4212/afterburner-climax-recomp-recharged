@@ -303,6 +303,11 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       leaves fetch types invalid elsewhere (texture fetches 10F66096 / 12506006), so the stage 2/3 terrain may read
       never-copied vertex or matrix-index data (vf0 / vf7). Now any non-texture, non-empty constant is uploaded,
       the first 8 such logged ("D151:").
+- [ ] Session 4: D151 had no effect (log 034, no "D151:" lines: the fetch types were kVertex). Owner: the old Xenia
+      renderer drew the stage 2/3 terrain (same SDK translator), so the bug is NativeX's. Checked and ruled out:
+      D130/D137 (filled constants reach the renderer through the tracker's record), dynamic constant addressing
+      (the SDK sets all 256 bits, translator.cpp:188), upstream NativeX bf965e9..b63f67f (20 commits, none about
+      geometry). D152 (patch 0028): F8 + native_x_renderer_inspect_vs reads the terrain draw back.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
