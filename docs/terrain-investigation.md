@@ -47,6 +47,27 @@ below is settled unless a new fact contradicts it. Details and evidence: `develo
    19319; index counts 1322, 1303) have depth format D24_UNORM_S8 (129), back-face culling, depth test and write on,
    compare LESS, and render with the scene's depth attachment (view 2483) like the buildings. Use it for steps 1-2.
 
+## Best guesses for the next session (ranked) and a one-session plan
+The owner will scrap the project if this is not found in the next session. No new logging builds: work from
+Stage2-NativeX-new2.rdc (clean) with renderdoccmd + tools/rdc, ask before any build.
+1. **(~45 %) The terrain PS kills every pixel.** D153 turned off the fixed-function tests but not the shader's own
+   kill (`kill if packed c8.w > tex.a * interp2.w - packed c1.x`). Check the PACKED mapping: the PS float buffer is
+   144 bytes = 9 constants packed by the shader's bitmap; packed [8] read (0.114, 0.299, 0.587, 0) looks like
+   luminance weights, not a kill threshold, so NativeX may upload the constants in a different order or set than
+   the translation expects (D93's sized-constant substitution, or the PS constants written after
+   BeginShaderConstantF4 PS start 0/0x1C, D130). Steps: get PS 92AC7F's register bitmap (log its disassembly with
+   `native_x_renderer_log_shaders = "92AC7F14F7C95B62"`, no build needed), map packed index -> register, compare the
+   capture's 144 bytes with the game's PS constants (F10 compares the register file, not the packed upload).
+   Then run psrun.py on the real inputs.
+2. **(~25 %) Interpolators reach the PS wrong.** NativeX passes `interpolator_mask` = VS writes & PS reads (draw.cpp
+   ~line 820); a mismatch would leave interp2 (w = 1.0 in the VS) at 0 in the PS and kill everything. Compare the
+   VS/PS modification values in the pipeline (the VS output locations vs the PS input locations in modules 1301/1302
+   of the new2 capture).
+3. **(~20 %) A later draw paints over the terrain.** In new2, list every draw after the terrain that writes scene
+   colour image 2501 with a full-screen rect (prim 13) and no depth test; check the mid-scene Resolve (#1041 in
+   log 026) and what samples its copy.
+4. **(~10 %) Something else** (MSAA resolve of the tiled pass, fog plane depth); revisit only if 1-3 are clean.
+
 ## Tools
 - F8 draw dump (D149), `native_x_renderer_log_shaders` (D150), `native_x_renderer_inspect_vs` (D152),
   `native_x_renderer_force_visible_vs` (D153), F9 trace, F10 verify.
