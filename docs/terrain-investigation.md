@@ -40,6 +40,9 @@ below is settled unless a new fact contradicts it. Details and evidence: `develo
    Does it kill, or what colour does it write?
 2. If it writes a colour: look for a later draw that overwrites the lower half of image 2501.
 3. Take a new capture WITHOUT `native_x_renderer_force_visible_vs` in the toml (Stage2-NativeX.rdc was taken with it).
+   Stage2-NativeX-new.rdc still shows the forced state on the terrain pipeline (1303: no depth format, depth off,
+   cull none, rendered without a depth attachment, exactly as D153 forces it), so the setting was probably still
+   active: confirm the log has no "D153:" line before trusting a capture as the normal case.
 
 ## Tools
 - F8 draw dump (D149), `native_x_renderer_log_shaders` (D150), `native_x_renderer_inspect_vs` (D152),
