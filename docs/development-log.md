@@ -320,6 +320,22 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       fetch's address) and the 32 fetch constants' upload check out; the D152 readback read guest memory, not the
       mirror. Suspect: a stale mirror copy of the stage 2/3 terrain buffers (loaded into memory the mirror copied
       before, without an invalidation). D154 (patch 0030): F7 invalidates the whole mirror once.
+- [ ] **Session 4 end: RenderDoc capture analysis (Stage2-NativeX.rdc, taken WITH force_visible on).** renderdoccmd
+      built locally from github.com/baldurk/renderdoc (cmake -DENABLE_QRENDERDOC=OFF -DENABLE_PYRENDERDOC=OFF
+      -DENABLE_GL=OFF -DENABLE_GLES=OFF -DENABLE_XLIB=OFF -DENABLE_XCB=OFF; ninja renderdoccmd), then
+      `renderdoccmd convert -f X.rdc -o out.zip.xml -c zip.xml` (no GPU needed). Verified for the terrain draws
+      (pipeline 1634, VS module 1619 = 4CB480, PS module 1621 = 92AC7F): the guest memory mirror (buffer 601, file
+      000057) holds the right vertex/index data; vertex fetch constants, float constants (c24-c26, c80-c83) and
+      system constants (index endian/min/max/base, ndc) are right (upload heap memory 549 = file 000157, dynamic
+      offsets: sys 86784, VS float 87296, bool 1280, fetch 91648, PS float 91392); the translated VS run on the CPU
+      (tools/rdc/spvrun.py, a small SPIR-V interpreter) gives the guest's clip positions to 0.1 %; viewport and
+      scissor match the buildings'; the forced draws render into the scene color (image 2501) with no depth; the
+      terrain texture (image 19866, BC3 2048x2048) has alpha 255 in 99 % of blocks; texture swizzle 0x688 (identity),
+      signs unsigned. The PS has a kill: kill if packed c8.w (0) > tex.a * interp2.w (1.0) - packed c1.x (0.5).
+      NOT YET DONE: run PS 1621 on those inputs (tools/rdc/psrun.py has BC3 decode and the extra ops; inputs are
+      the VS outputs printed by spvrun) to see if it kills or what it writes; then check whether a later draw
+      overwrites image 2501's lower half. Take a capture WITHOUT force_visible too. F7 commit (D154) was pushed but
+      its CI run cancelled at the owner's request: never push without the owner's go-ahead.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

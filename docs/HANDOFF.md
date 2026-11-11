@@ -15,6 +15,9 @@ draw calls NativeX sees or drawn with wrong state.
 ## Session 3 end (2026-11-09 23:20): open bugs, launcher status
 
 ### Open rendering bugs (track these down next)
+0. **READ FIRST (session 4 end):** stage 2/3 terrain is not drawn by NativeX (the old Xenia renderer draws it). The
+   development log's "Session 4 end: RenderDoc capture analysis" entry says what is proven correct and the next two
+   steps (run the PS with tools/rdc/psrun.py; look for a later overwrite). Ask the owner before every build.
 1. **Stage 3 desert ground: flat beige** (Snap12, log 022). **Session 4: cause found, fix committed, to test.** The
    "EndTiling" hook sat on 82248DB0, a command-buffer begin the engine calls inside the tiled scene: NativeX ended
    the tiled pass mid-scene, so the targets bound after it got 1280x256 hosts (the ground went there; the lower
