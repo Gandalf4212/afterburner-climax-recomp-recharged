@@ -313,7 +313,8 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       (rotation + translation), view-projection c80-c83 (infinite far: depth = 1 - 1/w). By hand, draw 85's first
       vertex lands at NDC (0.01, -0.96), depth 0.99972: on screen. The scene's clear inside the tiled pass (#486) is
       z=1, color f4dab9 (the beige). Snap13 shows the sky through where the canyon walls are: no pixels at all (not
-      fog). D153 (patch 0029, test) forces those draws visible.
+      fog). D153 (patch 0029, test) forces those draws visible. Its first build crashed (log 036): ScopedRegisters
+      held 8 overrides, a tiled forced draw sets 9; now 16.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

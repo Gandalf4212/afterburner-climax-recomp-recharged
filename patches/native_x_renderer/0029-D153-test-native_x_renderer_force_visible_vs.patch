@@ -1,4 +1,4 @@
-From 2f12292e9ee4351dc4fa624b39b83ff5c5bf6d1f Mon Sep 17 00:00:00 2001
+From 3c85e279d4738279f7796d715bcd45c5a20d5bd7 Mon Sep 17 00:00:00 2001
 From: Gandalf4212 <gandalf4212@gmail.com>
 Date: Tue, 10 Nov 2026 21:29:25 -0500
 Subject: [PATCH] D153 (test): native_x_renderer_force_visible_vs
@@ -9,11 +9,11 @@ test, no blending, all of rt0's channels written. After Burner Climax
 vertex data and lands on screen (D152 readback, by hand) yet produces no
 pixels; this tells whether its pixels are produced and then rejected.
 ---
- src/draw.cpp | 21 +++++++++++++++++++++
- 1 file changed, 21 insertions(+)
+ src/draw.cpp | 23 ++++++++++++++++++++++-
+ 1 file changed, 22 insertions(+), 1 deletion(-)
 
 diff --git a/src/draw.cpp b/src/draw.cpp
-index 7a0c9e4..2779524 100644
+index 7a0c9e4..9664bcf 100644
 --- a/src/draw.cpp
 +++ b/src/draw.cpp
 @@ -42,6 +42,9 @@
@@ -26,6 +26,15 @@ index 7a0c9e4..2779524 100644
  REXCVAR_DEFINE_INT32(native_x_renderer_draw_log, 0, "NativeXRenderer",
                       "Bring-up: log the first N draws NativeXRenderer processes (primitive, indices, shaders)");
  REXCVAR_DEFINE_STRING(native_x_renderer_alpha_to_coverage, "auto", "NativeXRenderer",
+@@ -86,7 +89,7 @@ class ScopedRegisters {
+ 
+  private:
+   rg::RegisterFile& registers_;
+-  std::array<std::pair<uint32_t, uint32_t>, 8> saved_{};
++  std::array<std::pair<uint32_t, uint32_t>, 16> saved_{};  // D153 needs 9 on a tiled draw
+   uint32_t count_ = 0;
+ };
+ 
 @@ -785,6 +788,24 @@ void DrawPath::Draw(const StateTracker::Program& vertex_program, const StateTrac
      overrides.Set(rg::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL, regs[rg::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL] & 0x80000000u);
      overrides.Set(rg::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR, 0x2000u | (0x2000u << 16));
