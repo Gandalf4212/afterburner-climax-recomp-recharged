@@ -272,6 +272,14 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       `native_x_renderer_all_bins = true` (028) the player's jet vanished at the stage start and much else broke:
       the predicated state inside recorded buffers really selects variants (D140 holds). Keep all_bins off; the
       counter stays as a check. Next: F10 verify on stage 3 (do the ground's draws match the GPU?).
+- [x] Session 4, F10 on stages 2/3 (log 029, frames 5304 and 5343): 129/129 and 137/137 draw calls fully match the
+      GPU; the replayed (RunCommandBuffer) draws differ only in PS c40-c43. Those are the engine's per-tile
+      constants: after BeginTiling, 82168994-82168A24 loops over the tiles, SetPredication(3 << 2i) (8224DB08),
+      BeginShaderConstantF4(PS, 40, 4) and writes c40 = (tile left, tile top, K, K) (K = float at 0x82003F7C);
+      c41-c43 are never written (stale on both sides). NativeX keeps tile 0's c40 (0, 0), right for a full-screen
+      draw (the 266 of 399 mismatches are tiles 1-2). So the state is right and the flat ground is in how the
+      renderer executes it. Untested ideas: render scale 1 (pixel positions are reverted by the scale, SDK recomp
+      change 30), anti-aliasing off.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
