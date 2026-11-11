@@ -1,0 +1,184 @@
+From e99d8960d8561c62205eaf87a5b1d28b5c939188 Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Tue, 10 Nov 2026 19:16:59 -0500
+Subject: [PATCH] D149: F8 logs the next frame's draws as the renderer drew
+ them
+
+For draws the state matches the GPU (F10) but nothing shows (After
+Burner Climax stage 2/3 terrain, session 4): each draw of the frame is
+logged with drawn or not, primitive, guest/host vertex counts, shader
+hashes (or no pixel shader), texture count, rt0/depth host and guest
+sizes, the surface, depth, color, stencil, alpha, cull, clip and VTE
+registers, the guest viewport and the host viewport and depth range.
+---
+ src/draw.cpp     | 71 ++++++++++++++++++++++++++++++++++++++++++++++--
+ src/draw.h       | 13 +++++++++
+ src/renderer.cpp |  4 +++
+ 3 files changed, 85 insertions(+), 3 deletions(-)
+
+diff --git a/src/draw.cpp b/src/draw.cpp
+index 6440b38..3d256b2 100644
+--- a/src/draw.cpp
++++ b/src/draw.cpp
+@@ -761,9 +761,48 @@ void DrawPath::Draw(const StateTracker::Program& vertex_program, const StateTrac
+     overrides.Set(rg::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL, regs[rg::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL] & 0x80000000u);
+     overrides.Set(rg::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR, 0x2000u | (0x2000u << 16));
+   }
+-  if (DrawInternal(vertex_program, pixel_program, copies, targets)) {
+-    ++stats_.drawn;
+-  }
++  const bool dumping = dump_frames_ > 0;
++  if (dumping) dump_ = {};
++  const bool drawn = DrawInternal(vertex_program, pixel_program, copies, targets);
++  if (drawn) ++stats_.drawn;
++  if (dumping) LogDumpedDraw(drawn, targets, tiled);
++}
++
++// D149: the draw dump. Requested from the UI thread (F8), started and ended on the render thread at EndFrame.
++namespace {
++std::atomic<bool> g_draw_dump_requested{false};
++}  // namespace
++
++void DrawPath::RequestDrawDump() { g_draw_dump_requested.store(true); }
++
++void DrawPath::LogDumpedDraw(bool drawn, const std::array<HostTarget*, 5>& targets, bool tiled) {
++  if (++dump_index_ > 3000) return;
++  const rg::RegisterFile& regs = *registers_;
++  auto size = [](const HostTarget* t) {
++    return t ? fmt::format("{}x{} (guest {}x{})", t->width, t->height, t->guest_width, t->guest_height)
++             : std::string("none");
++  };
++  const auto initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
++  REXLOG_INFO("[native_x_renderer] D149 draw {}: {}{} prim {} guest {} -> host {} vertices; VS {:016X} PS {:016X}{}, "
++              "{} textures; rt0 {} depth {}; RB_SURFACE_INFO {:08X} COLOR_INFO {:08X} DEPTH_INFO {:08X} "
++              "MODECONTROL {:08X}; DEPTHCONTROL {:08X} COLORCONTROL {:08X} STENCILREFMASK {:08X} ALPHA_REF {}; "
++              "SC_MODE_CNTL {:08X} CLIP_CNTL {:08X} VTE_CNTL {:08X}; guest viewport scale {} {} {} offset {} {} {}; "
++              "host viewport {}",
++              dump_index_, drawn ? "drawn" : "NOT drawn", tiled ? " (tiled)" : "", uint32_t(initiator.prim_type),
++              dump_.guest_count, dump_.host_count, dump_.vs, dump_.ps, dump_.has_ps ? "" : " (no pixel shader)",
++              dump_.textures, size(targets[0]), size(targets[4]), regs.Get<reg::RB_SURFACE_INFO>().value,
++              regs.Get<reg::RB_COLOR_INFO>().value, regs.Get<reg::RB_DEPTH_INFO>().value,
++              regs.Get<reg::RB_MODECONTROL>().value, regs.Get<reg::RB_DEPTHCONTROL>().value,
++              regs.Get<reg::RB_COLORCONTROL>().value, regs.Get<reg::RB_STENCILREFMASK>().value,
++              regs.Get<float>(rg::XE_GPU_REG_RB_ALPHA_REF), regs.Get<reg::PA_SU_SC_MODE_CNTL>().value,
++              regs.Get<reg::PA_CL_CLIP_CNTL>().value, regs.Get<reg::PA_CL_VTE_CNTL>().value,
++              regs.Get<float>(rg::XE_GPU_REG_PA_CL_VPORT_XSCALE), regs.Get<float>(rg::XE_GPU_REG_PA_CL_VPORT_YSCALE),
++              regs.Get<float>(rg::XE_GPU_REG_PA_CL_VPORT_ZSCALE), regs.Get<float>(rg::XE_GPU_REG_PA_CL_VPORT_XOFFSET),
++              regs.Get<float>(rg::XE_GPU_REG_PA_CL_VPORT_YOFFSET), regs.Get<float>(rg::XE_GPU_REG_PA_CL_VPORT_ZOFFSET),
++              dump_.viewport ? fmt::format("{} {} {}x{} depth {}..{}", dump_.viewport_xywh[0], dump_.viewport_xywh[1],
++                                           dump_.viewport_xywh[2], dump_.viewport_xywh[3], dump_.depth_range[0],
++                                           dump_.depth_range[1])
++                             : std::string("not set by this draw"));
+ }
+ 
+ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const StateTracker::Program& pixel_program,
+@@ -832,6 +871,13 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+     ++stats_.failed;
+     return false;
+   }
++  if (dump_frames_ > 0) {
++    dump_.vs = vertex_shader->ucode_data_hash();
++    dump_.ps = pixel_shader ? pixel_shader->ucode_data_hash() : 0;
++    dump_.has_ps = pixel_shader != nullptr;
++    dump_.guest_count = primitives.guest_draw_vertex_count;
++    dump_.host_count = primitives.host_draw_vertex_count;
++  }
+   static int32_t logged_draws = 0;
+   if (logged_draws < REXCVAR_GET(native_x_renderer_draw_log)) {
+     ++logged_draws;
+@@ -1182,6 +1228,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+   // guest memory they read.
+   uint32_t used_texture_mask = vertex_shader->GetUsedTextureMaskAfterTranslation() |
+                                (pixel_shader ? pixel_shader->GetUsedTextureMaskAfterTranslation() : 0);
++  if (dump_frames_ > 0) dump_.textures = uint32_t(std::popcount(used_texture_mask));
+   guest_textures_->RequestTextures(used_texture_mask);
+ 
+   // Vertex data: every vertex fetch constant the vertex shader uses.
+@@ -1435,6 +1482,15 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+   viewport.Height = float(viewport_info.xy_extent[1]) * scale_y;
+   viewport.MinDepth = viewport_info.z_min;
+   viewport.MaxDepth = viewport_info.z_max;
++  if (dump_frames_ > 0) {
++    dump_.viewport = true;
++    dump_.viewport_xywh[0] = viewport.TopLeftX;
++    dump_.viewport_xywh[1] = viewport.TopLeftY;
++    dump_.viewport_xywh[2] = viewport.Width;
++    dump_.viewport_xywh[3] = viewport.Height;
++    dump_.depth_range[0] = viewport.MinDepth;
++    dump_.depth_range[1] = viewport.MaxDepth;
++  }
+   // The temporal antialiasing's jitter (D47): the main 3D view's image is shifted by a sub-pixel offset,
+   // different every frame. The scissor stays. A view found from the draws (D119) starts at its first depth-writing
+   // draw of that size with a perspective matrix.
+@@ -1799,6 +1855,15 @@ void DrawPath::FillSystemConstants(const DrawContext& draw) {
+ uint32_t DrawPath::TakePackedRead() { return textures_->TakePackedRead(); }
+ 
+ void DrawPath::EndFrame() {
++  // D149: the draw dump covers the frame after the request.
++  if (dump_frames_ > 0 && --dump_frames_ == 0) {
++    REXLOG_INFO("[native_x_renderer] D149: draw dump end, {} draws", dump_index_);
++  }
++  if (dump_frames_ == 0 && g_draw_dump_requested.exchange(false)) {
++    dump_frames_ = 1;
++    dump_index_ = 0;
++    REXLOG_INFO("[native_x_renderer] D149: draw dump of the next frame (F8)");
++  }
+   // The stored pipelines (D42): created as their shaders get ready; new records written; the pipeline
+   // cache saved, on a thread of its own (D45), once nothing new was compiled for 10 s (at 60 FPS), and at
+   // most every 5 minutes (D52): new areas bring pipelines every few seconds, and each save writes tens of
+diff --git a/src/draw.h b/src/draw.h
+index 960db17..fb56fc3 100644
+--- a/src/draw.h
++++ b/src/draw.h
+@@ -109,6 +109,8 @@ class DrawPath {
+ 
+   // After the frame was presented.
+   void EndFrame();
++  // D149: the next frame's draws are logged as the renderer drew them (F8, bind_native_x_renderer_draw_dump).
++  static void RequestDrawDump();
+   // Something else bound render targets (a clear, a resolve, Present): the next draw binds its own again, sets
+   // its viewport and scissor again (DiligentCore resets the viewport with the render targets, D81), and commits
+   // its shader resources again (D82: the other work committed its own, or submitted the command buffer).
+@@ -386,6 +388,17 @@ class DrawPath {
+   std::array<uint8_t, (8 + 32) * 4> uploaded_bool_loop_{};
+   uint64_t uploaded_frame_ = UINT64_MAX;
+   Stats stats_;
++  // D149: the draw dump (RequestDrawDump): what DrawInternal saw of the draw being dumped.
++  struct DumpInfo {
++    uint64_t vs = 0, ps = 0;
++    uint32_t guest_count = 0, host_count = 0, textures = 0;
++    bool has_ps = false, viewport = false;
++    float viewport_xywh[4]{}, depth_range[2]{};
++  };
++  DumpInfo dump_;
++  int dump_frames_ = 0;
++  uint32_t dump_index_ = 0;
++  void LogDumpedDraw(bool drawn, const std::array<HostTarget*, 5>& targets, bool tiled);
+ };
+ 
+ }  // namespace native_x_renderer
+diff --git a/src/renderer.cpp b/src/renderer.cpp
+index fa9545d..d824148 100644
+--- a/src/renderer.cpp
++++ b/src/renderer.cpp
+@@ -39,6 +39,7 @@
+ #include <rex/ppc/context.h>
+ #include <rex/system/interfaces/graphics.h>
+ #include <rex/system/kernel_state.h>
++#include <rex/ui/keybinds.h>
+ #include <rex/ui/window.h>
+ 
+ #include "Query.h"
+@@ -597,6 +598,9 @@ bool EnsureDrawPath() {
+     return false;
+   }
+   g_draw = std::move(draw);
++  // D149: F8 logs the next frame's draws as the renderer drew them (targets, viewport, depth, cull, shaders).
++  rex::ui::RegisterBind("bind_native_x_renderer_draw_dump", "F8",
++                        "NativeXRenderer: log the next frame's draws as drawn", [] { DrawPath::RequestDrawDump(); });
+   g_draw->SetUploadAhead(UploadAhead);
+   g_draw->SetSceneWaitBudget(std::max(0.0, REXCVAR_GET(native_x_renderer_scene_wait_ms)));
+   g_draw->SetTextureSizeConstants(g_profile->texture_size_constants, g_profile->texture_size_constant_count);
+-- 
+2.43.0
+

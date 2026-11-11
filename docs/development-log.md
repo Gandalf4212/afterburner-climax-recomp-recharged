@@ -280,6 +280,11 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       draw (the 266 of 399 mismatches are tiles 1-2). So the state is right and the flat ground is in how the
       renderer executes it. Untested ideas: render scale 1 (pixel positions are reverted by the scale, SDK recomp
       change 30), anti-aliasing off.
+- [ ] Session 4: the owner's Xenia screenshots show stage 2 (mountains, valley, town) and stage 3 (canyon) terrain;
+      NativeX draws none of it (sky, jets, HUD only). The state matches the GPU (F10, log 029) and the renderer
+      counts every draw drawn (246-321 per frame, 0 failed), so the pixels are lost in the renderer. D149 (patch
+      0025): F8 logs the next frame's draws as drawn (targets, viewport, depth/cull/alpha registers, shaders) to
+      compare a terrain draw with a jet draw.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
