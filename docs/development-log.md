@@ -308,6 +308,12 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       D130/D137 (filled constants reach the renderer through the tracker's record), dynamic constant addressing
       (the SDK sets all 256 bits, translator.cpp:188), upstream NativeX bf965e9..b63f67f (20 commits, none about
       geometry). D152 (patch 0028): F8 + native_x_renderer_inspect_vs reads the terrain draw back.
+- [ ] Session 4, D152 result (log 035): stage 2 terrain draws (VS 4CB480) read vf95 (stride 8, k8in32) with world
+      coordinates (e.g. -5000, 3273, 3753), vf88 (0,0,0,0,1,1,1,1,... stride 0: a0 = 0), world matrix c24-c26
+      (rotation + translation), view-projection c80-c83 (infinite far: depth = 1 - 1/w). By hand, draw 85's first
+      vertex lands at NDC (0.01, -0.96), depth 0.99972: on screen. The scene's clear inside the tiled pass (#486) is
+      z=1, color f4dab9 (the beige). Snap13 shows the sky through where the canyon walls are: no pixels at all (not
+      fog). D153 (patch 0029, test) forces those draws visible.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

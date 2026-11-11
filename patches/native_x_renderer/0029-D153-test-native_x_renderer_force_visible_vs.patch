@@ -1,0 +1,56 @@
+From 2f12292e9ee4351dc4fa624b39b83ff5c5bf6d1f Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Tue, 10 Nov 2026 21:29:25 -0500
+Subject: [PATCH] D153 (test): native_x_renderer_force_visible_vs
+
+Draws of the listed vertex shaders: no depth test, no culling, no alpha
+test, no blending, all of rt0's channels written. After Burner Climax
+(session 4): the stage 2/3 terrain (VS 4CB48051EDE053AA) has correct
+vertex data and lands on screen (D152 readback, by hand) yet produces no
+pixels; this tells whether its pixels are produced and then rejected.
+---
+ src/draw.cpp | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/src/draw.cpp b/src/draw.cpp
+index 7a0c9e4..2779524 100644
+--- a/src/draw.cpp
++++ b/src/draw.cpp
+@@ -42,6 +42,9 @@
+ REXCVAR_DEFINE_STRING(native_x_renderer_inspect_vs, "", "NativeXRenderer",
+                       "D152: vertex shader hashes (as F8 shows them, comma-separated) whose draws the F8 dump reads "
+                       "back: fetch constants, the first vertices and indices in guest memory, the float constants");
++REXCVAR_DEFINE_STRING(native_x_renderer_force_visible_vs, "", "NativeXRenderer",
++                      "D153 (test): draws of these vertex shaders (hashes as F8 shows them, comma-separated) are drawn "
++                      "without depth test, culling, alpha test or blending, writing all of rt0's channels");
+ REXCVAR_DEFINE_INT32(native_x_renderer_draw_log, 0, "NativeXRenderer",
+                      "Bring-up: log the first N draws NativeXRenderer processes (primitive, indices, shaders)");
+ REXCVAR_DEFINE_STRING(native_x_renderer_alpha_to_coverage, "auto", "NativeXRenderer",
+@@ -785,6 +788,24 @@ void DrawPath::Draw(const StateTracker::Program& vertex_program, const StateTrac
+     overrides.Set(rg::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL, regs[rg::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL] & 0x80000000u);
+     overrides.Set(rg::XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR, 0x2000u | (0x2000u << 16));
+   }
++  // D153 (test): a listed vertex shader's draws forced visible.
++  {
++    const std::string& forced = REXCVAR_GET(native_x_renderer_force_visible_vs);
++    if (!forced.empty()) {
++      std::string name = fmt::format("{:016X}", vertex_program.hash);
++      std::string upper = forced;
++      for (char& ch : upper) ch = char(std::toupper(static_cast<unsigned char>(ch)));
++      if (upper.find(name) != std::string::npos) {
++        overrides.Set(rg::XE_GPU_REG_RB_DEPTHCONTROL, 0);
++        overrides.Set(rg::XE_GPU_REG_PA_SU_SC_MODE_CNTL, regs[rg::XE_GPU_REG_PA_SU_SC_MODE_CNTL] & ~3u);
++        overrides.Set(rg::XE_GPU_REG_RB_COLORCONTROL, regs[rg::XE_GPU_REG_RB_COLORCONTROL] & ~0x18u);
++        overrides.Set(rg::XE_GPU_REG_RB_BLENDCONTROL0, 0x00010001u);
++        overrides.Set(rg::XE_GPU_REG_RB_COLOR_MASK, regs[rg::XE_GPU_REG_RB_COLOR_MASK] | 0xFu);
++        static uint32_t logged = 0;
++        if (logged++ < 4) REXLOG_INFO("[native_x_renderer] D153: a draw of vertex shader {} forced visible", name);
++      }
++    }
++  }
+   const bool dumping = dump_frames_ > 0;
+   if (dumping) dump_ = {};
+   const bool drawn = DrawInternal(vertex_program, pixel_program, copies, targets);
+-- 
+2.43.0
+
