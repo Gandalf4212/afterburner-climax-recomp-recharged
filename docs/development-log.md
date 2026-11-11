@@ -298,6 +298,11 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       Stride=12 (UVs at 10, the first by vfetch_full). Both read a per-vertex matrix index from vf7 (32_FLOAT,
       a0 = trunc) and transform by c[24+a0..26+a0] (relative addressing), then c80-c83. So the bug is in the
       stride-8 layout's data or its translation, not in state or raster.
+- [ ] Session 4, D151 (patch 0027, to test): NativeX uploaded a vertex fetch constant's data only if its type was
+      kVertex (draw.cpp AddDrawRanges / DrawInternal); the translated shader reads the memory regardless. The game
+      leaves fetch types invalid elsewhere (texture fetches 10F66096 / 12506006), so the stage 2/3 terrain may read
+      never-copied vertex or matrix-index data (vf0 / vf7). Now any non-texture, non-empty constant is uploaded,
+      the first 8 such logged ("D151:").
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX

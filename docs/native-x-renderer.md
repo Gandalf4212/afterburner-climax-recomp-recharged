@@ -111,6 +111,7 @@ compiled when first drawn and kept. Draws wait up to 8 ms per frame for those (F
 | 0024 | D148: draws and recorded buffers dropped by bin predication logged (mask, select); `native_x_renderer_all_bins` (test, default off) passes every tile |
 | 0025 | D149: F8 (`bind_native_x_renderer_draw_dump`) logs the next frame's draws as drawn: targets, viewport, depth/cull/alpha registers, shaders |
 | 0026 | D150: `native_x_renderer_log_shaders` (hashes) logs those shaders' disassembly |
+| 0027 | D151: vertex data uploaded whatever the vertex fetch constant's type says (not texture, not empty); first 8 logged |
 
 To change NativeX: `git -C thirdparty/native_x_renderer checkout bf965e9 && git am ../../patches/native_x_renderer/*`,
 commit, then `git format-patch bf965e9..HEAD -o ../../patches/native_x_renderer` (replace the old files).

@@ -1,0 +1,66 @@
+From 08fa46201d3bda8964517312532de029536e560f Mon Sep 17 00:00:00 2001
+From: Gandalf4212 <gandalf4212@gmail.com>
+Date: Tue, 10 Nov 2026 20:25:16 -0500
+Subject: [PATCH] D151: vertex data uploaded whatever the fetch constant's type
+ field says
+
+DrawInternal and AddDrawRanges copied a vertex fetch constant's range only
+when its type was kVertex; the console's vertex fetch (and the SDK's
+translated shaders, which read the memory) do not check it. After Burner
+Climax's stage 2/3 terrain (VS 4CB48051EDE053AA, stride 8) is a lead:
+drawn every frame, nothing on screen. Texture-typed or empty constants
+are still skipped; the first 8 others are logged.
+---
+ src/draw.cpp | 22 ++++++++++++++++++++--
+ 1 file changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/src/draw.cpp b/src/draw.cpp
+index 3d256b2..cff60a0 100644
+--- a/src/draw.cpp
++++ b/src/draw.cpp
+@@ -676,6 +676,24 @@ void DrawPath::SavePipelineCache(bool compact, bool only_if_driver_changed) {
+   pipelines_unsaved_ = 0;
+ }
+ 
++namespace {
++// D151: a vertex fetch constant the shader reads is uploaded whatever its type field says, unless it is a texture's.
++// The console's vertex fetch does not check the type (the SDK's translated shaders do not either, they read the
++// memory); After Burner Climax's stage 2/3 terrain (VS 4CB48051EDE053AA) reads vertex data through a constant whose
++// type is not kVertex, so its data was never copied and the terrain was drawn from stale memory (session 4).
++bool VertexFetchUsable(const xenos::xe_gpu_vertex_fetch_t& fetch, uint32_t index) {
++  if (fetch.type == xenos::FetchConstantType::kVertex) return true;
++  if (fetch.type == xenos::FetchConstantType::kTexture || !fetch.size) return false;
++  static std::atomic<uint32_t> logged{0};
++  if (logged.fetch_add(1) < 8) {
++    REXLOG_INFO("[native_x_renderer] D151: vertex fetch constant {} has type {} (not kVertex): its data uploaded "
++                "anyway (address {:#x}, {} bytes)",
++                index, uint32_t(fetch.type), fetch.address << 2, fetch.size << 2);
++  }
++  return true;
++}
++}  // namespace
++
+ rg::SpirvShader* DrawPath::FindShader(xenos::ShaderType type, const StateTracker::Program& program,
+                                       bool* new_failure) {
+   if (new_failure) *new_failure = false;
+@@ -722,7 +740,7 @@ void DrawPath::AddDrawRanges(const StateTracker::Program& vertex_program, const
+     while (rex::bit_scan_forward(bits, &bit)) {
+       bits &= ~(1u << bit);
+       xenos::xe_gpu_vertex_fetch_t fetch = regs.GetVertexFetch(i * 32 + bit);
+-      if (fetch.type == xenos::FetchConstantType::kVertex) add(fetch.address << 2, fetch.size << 2);
++      if (VertexFetchUsable(fetch, i * 32 + bit)) add(fetch.address << 2, fetch.size << 2);
+     }
+   }
+   // Indices from memory: the range the primitive processor requests for them.
+@@ -1240,7 +1258,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
+     while (rex::bit_scan_forward(bits, &bit)) {
+       bits &= ~(1u << bit);
+       xenos::xe_gpu_vertex_fetch_t fetch = regs.GetVertexFetch(i * 32 + bit);
+-      if (fetch.type != xenos::FetchConstantType::kVertex) continue;
++      if (!VertexFetchUsable(fetch, i * 32 + bit)) continue;
+       if (!first_vertex_address) first_vertex_address = fetch.address;
+       memory_->RequestRange(fetch.address << 2, fetch.size << 2);
+     }
+-- 
+2.43.0
+
