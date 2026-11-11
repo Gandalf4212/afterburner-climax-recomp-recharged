@@ -292,6 +292,12 @@ process." (SDK got to `_Exit`) or not, then "Exit watchdog: shutdown did not fin
       the same PS, every register identical (stage 1 uses 4CB480 only in a 256x256 pass). Owner: stage 1 terrain is
       low, stages 2/3 tall. The owner also saw a hit jet vanish while its fire shows. D150 (patch 0026) logs the two
       vertex shaders' disassembly to compare.
+- [ ] Session 4, D150 result (log 033): the terrain vertex shaders 4CB48051EDE053AA (stages 2/3, not drawn) and
+      D9036E826C687B36 (stage 1, drawn) are the same 192-dword program except the vertex layout: 4CB480 reads
+      vf0 with Stride=8 (pos 32_32_32 at 0, normal at 3, three 32_32 UVs by vfetch_mini at offset 6); D9036E with
+      Stride=12 (UVs at 10, the first by vfetch_full). Both read a per-vertex matrix index from vf7 (32_FLOAT,
+      a0 = trunc) and transform by c[24+a0..26+a0] (relative addressing), then c80-c83. So the bug is in the
+      stride-8 layout's data or its translation, not in state or raster.
 - [x] The toml lists `native_x_renderer_recorded_draws` and `native_x_renderer_predicated_constants` under
       "Renderer (testing)" with comments, even at their defaults (`src/config_file.h`; owner's request).
 - [ ] NativeX: submodule at upstream main, map XDK 9328 D3D entry points (see NativeX
